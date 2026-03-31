@@ -4,7 +4,7 @@
 
 SPARK is Aivonic's flagship demo agent. It serves as the live demonstration of what an Aivonic agent can do. Anyone can interact with SPARK at https://agents.aivonic.ai/demo/aivonic_ab to experience the technology firsthand.
 
-SPARK runs on GPT-5.2 and showcases the full capabilities of the Aivonic platform in a single, interactive agent.
+SPARK showcases the full capabilities of the Aivonic platform in a single, interactive agent.
 
 ## SPARK's Skills
 
@@ -29,7 +29,7 @@ Write to SPARK in any supported language and it responds in that language automa
 Click the microphone button to speak to SPARK. It responds with high-quality voice output. Voice responses only trigger when you use voice input - typing gets text-only responses.
 
 ### Intelligent Conversation
-SPARK uses GPT-5.2 for natural, contextual conversation. It is not a scripted chatbot - it understands nuance, handles follow-up questions, and maintains context throughout the conversation.
+SPARK is not a scripted chatbot - it understands nuance, handles follow-up questions, and maintains context throughout the conversation.
 
 ### Email Communication
 SPARK has an active email address and can both send and receive emails. When someone emails spark@agent.aivonic.ai, SPARK replies with its characteristic warm, witty, self-aware personality. It signs off as "SPARK".

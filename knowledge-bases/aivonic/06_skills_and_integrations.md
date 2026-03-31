@@ -2,9 +2,9 @@
 
 ## Overview
 
-Aivonic agents come equipped with skills - modular capabilities that allow them to perform actions beyond conversation. There are 31 built-in skills available, and custom skills can be created by NEXUS (our agent creation engine) for specific business needs.
+Aivonic agents come equipped with skills - modular capabilities that allow them to perform real actions beyond conversation. There are 31 built-in skills available, and custom skills can be created for specific business needs.
 
-Skills are routed automatically via regex and semantic matching. When a customer message matches a skill's intent pattern, the agent activates the appropriate skill seamlessly within the conversation.
+When a customer message requires an action, the agent activates the appropriate skill seamlessly within the conversation.
 
 ## Built-In Skills (31)
 
@@ -70,7 +70,7 @@ knowledge_retrieval, appointment_booking, email_delivery, document_generation, h
 
 ## Custom Skills
 
-NEXUS can create new custom skills when a business has requirements not covered by the built-in library. Custom skills are generated from a JSON prompt, automatically registered, and integrated into the agent's routing system.
+Custom skills can be created when a business has requirements not covered by the built-in library.
 
 ## Integration Points
 

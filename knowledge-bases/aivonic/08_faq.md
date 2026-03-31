@@ -46,7 +46,7 @@ Agents have access to 31 built-in skills including email delivery, appointment b
 We ingest your business information through our Archon knowledge base system. This can include website content (crawled automatically), uploaded documents, FAQs, product catalogs, and other materials. The agent uses this knowledge to answer customer questions accurately.
 
 **What AI models do you use?**
-We support OpenAI models (including GPT-5.2) and Anthropic Claude models. The model is selected based on the agent's requirements and use case.
+We support multiple AI providers including OpenAI and Anthropic. The model is selected based on the agent's requirements and use case.
 
 **Is the agent secure?**
 Yes. Every agent is protected by the Crust security gateway, which provides Data Loss Prevention (DLP) and prompt injection protection. Security testing is part of the mandatory 4-phase evaluation every agent undergoes before deployment.
@@ -68,4 +68,4 @@ Yes. The client dashboard includes analytics, conversation history, and real-tim
 ## Voice AI Agent (Separate Product)
 
 **What is the Voice AI Agent?**
-The Voice AI Agent is a separate, dedicated product built on Vapi AI with a Make.com backend. It is designed for voice-first use cases like phone systems and voice assistants. This is different from the voice support feature that comes with every portal agent.
+The Voice AI Agent is a separate, dedicated product designed for voice-first use cases like phone systems and voice assistants. This is different from the voice support feature that comes with every portal agent.

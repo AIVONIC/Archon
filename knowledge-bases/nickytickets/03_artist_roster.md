@@ -1,29 +1,44 @@
-# NickyTickets - Artist Roster Overview
+# NickyTickets - Artist Roster
 
-**[NICK TO EDIT -- replace with real descriptions when ready. Current version is written to be credible without naming anyone.]**
+Genre across the roster: electronic music, predominantly house, some techno. All artists release on standard DSPs: Spotify, Apple Music, YouTube + vinyl. All active on Instagram (primary platform), TikTok, Bandcamp, YouTube.
 
-NickyTickets works with a focused roster across electronic music and adjacent genres. The management philosophy prioritises depth over breadth -- fewer artists, more attention, better outcomes.
+All artists can be named publicly, but Nick needs visibility over how they are communicated (especially Chloe Caillet - team member, not listed as manager).
 
-## Current Roster Profile
+## Current Roster
 
-**Artist A -- Touring Electronic Act**
-Genre: Melodic house / techno crossover. Career stage: Established international touring. Regular bookings across European club circuit and festival season. Active release schedule with independent distribution. Strong Spotify presence with editorial playlist support. Management focus: tour optimisation, release strategy timing around touring peaks, brand partnership development, international market expansion into North America and Asia-Pacific.
+### Chloe Caillet - DJ, Producer (Electronic)
+- Role: Day-to-day management (not senior manager - part of the team, not listed as her manager publicly)
+- Also manages her label, Smile Records (A&R, social media, marketing, release campaigns)
+- Status: Established artist, top tier, global tours + headline events
+- Notable: DSP playlist covers, global tours, press recognition, Coachella-level shows
+- Milestones: Mixmag front cover, Circoloco Residency, debut EP on Circoloco Records
+- Current focus: Label management, A&R, social media, release campaign marketing
 
-**Artist B -- Emerging Producer/DJ**
-Genre: Deep house / organic house. Career stage: Developing, building momentum. Growing streaming numbers with strong save-to-stream ratio indicating engaged audience. Focus on building from club circuit to festival bookings. Management focus: audience development, strategic release cadence, social media growth, building promoter relationships in key markets, first international bookings.
+### Laidlaw - DJ, Producer (Electronic)
+- Role: Senior manager, 360 view
+- Status: Low-mid tier artist
+- Notable: Glastonbury Festival, Fuse Resident, owner BEE YOU Records + events
+- Current focus: Finances, global touring, release strategy, marketing, logistics, emotional support, career decisions
+- Has a wider team: tour manager, creative partner, studio rent, office rent, logistics
 
-**Artist C -- Collaborative Project**
-Genre: Electronic / crossover. Career stage: Project-based. Involves coordination across multiple creatives with different schedules and priorities. Management focus: project coordination, stakeholder management, brand identity development, release campaign management, sync licensing opportunities.
+### Nesta - DJ, Producer (Electronic)
+- Role: Senior manager
+- Background: Lebanese artist
+- Status: Mature artist but globally a lower tier artist in terms of income
+- Current focus: Social media strategy and logistics
 
-## The Roster Philosophy
+### Ludmila di Pasquale - DJ, Producer, Live Artist (Electronic)
+- Role: Senior manager
+- Background: Argentinian artist
+- Status: Developing artist - low tier
+- Current focus: Music strategy, gig strategy, marketing, finding ways to break through
 
-Every artist on the roster gets genuine strategic attention -- not just administrative processing. The AI agents handle the operational volume so Nick can focus on the conversations, decisions, and relationships that actually move careers forward. The goal is quality of management, not quantity of clients.
+### Alex Kennon (with a K) - DJ, Producer (Electronic)
+- Role: Senior manager
+- Background: Italian artist living in Ibiza
+- Status: Mid-low tier artist
+- Current focus: Rebuilding image + awareness and turning gigs into growth
 
-## What NickyTickets Looks For in New Artists
+## Roster Philosophy
 
-- A clear artistic identity or the willingness to develop one
-- Work ethic and professional attitude
-- Existing body of work (releases, performances, or both)
-- Realistic expectations paired with genuine ambition
-- A collaborative mindset -- management is a partnership, not a service
-- Genre isn't a hard filter, but Nick's network and expertise are strongest in electronic music
+Predominant management role across all artists: marketing and strategy, with organisational tasks in between. Every artist gets genuine strategic attention - not just administrative processing. The AI agents handle the operational volume so Nick can focus on conversations, decisions, and relationships that actually move careers forward.

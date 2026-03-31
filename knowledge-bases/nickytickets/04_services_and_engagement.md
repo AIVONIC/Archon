@@ -1,54 +1,75 @@
-# NickyTickets - Services & Engagement Models
+# NickyTickets - Services & How Nick Works
 
-**[NICK TO EDIT -- adjust scope descriptions and add/remove tiers as needed.]**
+NickyTickets offers four service lines, with AI integration running through all of them.
 
-NickyTickets offers three engagement models, each scalable based on the artist's needs and career stage.
+## Onboarding a New Artist
 
-## Full Management
+1. Audit social media and all platforms
+2. Create initial strategy and to-do list (an "INO list" - what's needed, what's offered)
+3. Activate on external team needs: booking agents, publishers, labels
+4. Relationship and trust building (continuous, fundamental to the service)
+5. Action lists, pitching and outreach for further development of ideas
 
-The complete package. NickyTickets becomes the operational centre of the artist's career.
+## Service Line 1: Artist Management
 
-What's included:
-- Day-to-day management and strategic career planning
-- International touring coordination (route planning, advancing, logistics, visas, budget)
-- Music release management (8-12 week campaign cycles, distributor coordination, playlist pitching)
-- Marketing strategy and execution across all platforms
-- Social media management and content coordination
-- DSP analytics and performance tracking
-- Brand development and partnership opportunities
-- Business affairs: contracts, invoicing, collection society registration, tax coordination
-- AI-powered operations: communication triage, automated scheduling, analytics dashboards, document generation
-- 24/7 operational coverage through AI agent infrastructure
+Full-service career development, international booking, touring coordination, marketing strategy, release management, brand development, and AI-powered operational support (24/7 communication handling, automated analytics, scheduling).
 
-Who it's for: Artists ready for committed, long-term management partnership. Typically at developing or established stage with active release and touring schedules.
+Core services within management:
+- Creative strategy and marketing strategy + implementation (daily and long-term)
+- Market-by-market planning (UK focus vs international expansion)
+- Release campaign management: timelines, to-do lists, traditional project management
+- Pitching (but only once the artist is "hot" - build heat first, then pitch)
+- Brand opportunity identification
+- Social media management and content strategy
+- Relationship management
+- Business financials management
+- Career guidance and decision-making
+- Emotional support and stability
+- Creative space protection - goal is for artists to not need to take every show just for income
 
-Commission structure: Discussed individually based on scope and career stage. Structured to reflect the expanded value modern management provides.
+## Service Line 2: Event Production
 
-## Campaign Management
+End-to-end event coordination from venue selection to post-event analytics.
 
-Project-based engagement for specific releases, tours, or campaigns. Full NickyTickets operational capability applied to a defined scope.
+## Service Line 3: AI Integration
 
-What's included:
-- Campaign strategy and planning
-- Release management OR tour management OR marketing campaign (scoped per project)
-- AI-powered analytics and reporting for the campaign period
-- Post-campaign performance review and recommendations
+Autonomous agents handling communication triage, social media operations, scheduling, DSP analytics, and tour logistics. Powered by Aivonic's agent infrastructure.
 
-Who it's for: Artists with existing management who need specialist support for specific projects, or artists exploring what professional management looks like before committing long-term.
+AI integration opportunities identified by Nick:
+- Automated expense tracking and real-time P&L per show/tour
+- Potential automated agent booking system (contracts, invoices)
+- Email-linked offer tracking with automatic commission/expense deduction
+- Bank account integration for real-time financial visibility
+- Social media management assistance
+- A&R - creative counselling and usage for content, design work and creative direction
+- Content creation
+- Project + task management from micro to macro
+- Artist tracking - searching for new talent
 
-Pricing: Project-based fee, scoped to deliverables.
+## Service Line 4: Licensing & Sync
 
-## AI Integration Consultation
+Music placement across film, advertising, gaming, and digital platforms.
 
-For managers and management companies who want to implement AI tools in their own operations.
+## Financial Management
 
-What's included:
-- Audit of current workflow and operational bottlenecks
-- AI agent architecture design for your specific operation
-- Implementation support and agent configuration
-- Training and onboarding for the management team
-- Ongoing optimisation based on real usage data
+- Budgeting: can we afford this tour, should we pause and write music instead?
+- Commission tracking management + agent fees
+- Team payment management: ensuring the artist can cover all third-party payments as well as internal team members
+- P&L tracking per show and tour (currently via Google Sheets - identified as automation opportunity)
 
-Who it's for: Working managers who see the potential of AI but need guidance from someone who's already built it into a live operation. Not a software demo -- practical implementation by a working manager for working managers.
+## Touring & Bookings
 
-Pricing: Consultation fee, scoped to engagement length and complexity.
+- Usually handled with a booking agent, but management steps in when there's no agent
+- Agent structure: Europe + Rest of World as one territory, North America and South America as another
+- Management handles: negotiation, advancing, logistics, contracting (when no agent)
+- Agent handles: invoicing and contracts
+- Each territory has its own agent representation
+- Management handles promoter relationships as well - bigger picture conversations + delivers strategy to the team
+
+## Release Management
+
+- Timeline planning depending on team size
+- Music management (A&R, mix, mastering, ideas, remixes)
+- Coordination with PRs, labels, marketing teams, or in-house execution
+- DSP pitching and playlist strategy
+- Coordination with creative departments (artwork, visuals, video)

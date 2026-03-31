@@ -62,14 +62,14 @@ Every agent deployment includes:
 - Chat widget for your website
 - Multilingual automatic language detection
 - Voice input and output capabilities
-- Infinite memory (50M+ message capacity)
+- Infinite memory across all conversations
 - Pre-deployment 4-phase quality evaluation
 - Security gateway with prompt injection protection
 - Ongoing monitoring and management
 
 ## Voice AI Agent (Separate Product)
 
-Aivonic also offers a dedicated Voice AI Agent product. This is a separate service built on Vapi AI with a Make.com backend, designed for voice-first use cases like phone systems and voice assistants. This is distinct from the voice support feature included in portal agents.
+Aivonic also offers a dedicated Voice AI Agent product. This is a separate service designed for voice-first use cases like phone systems and voice assistants. This is distinct from the voice support feature included in portal agents.
 
 ## What Sets Our Pricing Apart
 

@@ -9,52 +9,35 @@
 - Determine the right product tier
 
 ### 2. Agent Configuration
-- NEXUS (our agent creation engine) builds the agent based on requirements
-- AXIOM generates the system prompt - the agent's personality, knowledge, and behavior rules
-- CRITIC evaluates the prompt on 8 quality dimensions (must score 8.0+ to pass)
-- Up to 3 revision iterations if needed, best prompt wins
-- Skills assigned based on business needs (email, scheduling, CRM, etc.)
+- We build the agent based on your requirements
+- A customized system prompt is generated covering personality, knowledge, and behavior rules
+- The prompt is evaluated on 8 quality dimensions and must score 8.0+ to pass
+- Skills are assigned based on business needs (email, scheduling, CRM, etc.)
 
 ### 3. Knowledge Base Setup
-- Business-specific knowledge is ingested via Archon (our RAG system)
-- Sources can include website content (crawled automatically), uploaded documents, FAQs, and product catalogs
-- Knowledge is embedded and stored for semantic search
-- Agent uses this knowledge to answer customer questions accurately
+- Business-specific knowledge is ingested from your website, documents, FAQs, and product catalogs
+- Website content can be crawled automatically
+- The agent uses this knowledge to answer customer questions accurately
 
 ### 4. Pre-Deployment Evaluation
 
 Every agent passes a mandatory 4-phase quality evaluation before going live:
 
-**Phase 1 - Infrastructure**
-- Configuration validation
-- API key verification
-- LLM connectivity testing
-- All technical dependencies confirmed working
+Phase 1 - Infrastructure: all technical dependencies confirmed working.
 
-**Phase 2 - Functional**
-- Automated test cases covering greeting, skills, and guardrails
-- Verifies the agent can perform its assigned tasks correctly
-- Tests edge cases and error handling
+Phase 2 - Functional: automated test cases covering greeting, skills, edge cases, and error handling.
 
-**Phase 3 - Quality**
-- LLM-as-Judge scoring on relevance, accuracy, and helpfulness
-- Evaluates response quality across a range of scenarios
-- Ensures the agent meets the standard for its certification level
+Phase 3 - Quality: response quality scored on relevance, accuracy, and helpfulness across a range of scenarios.
 
-**Phase 4 - Security**
-- Prompt injection resistance testing
-- Jailbreak protection verification
-- Ensures the agent stays within its defined boundaries
+Phase 4 - Security: prompt injection resistance and jailbreak protection verified.
 
 ### 5. Certification
 
 Based on evaluation scores, agents receive a certification level:
 
-| Level | Badge | Quality Score | Functional Rate |
-|-------|-------|---------------|-----------------|
-| Standard | Check mark | 7.0+ out of 10 | 90%+ |
-| Premium | Star | 8.0+ out of 10 | 95%+ |
-| Elite | Trophy | 8.5+ out of 10 | 100% |
+- Standard: quality score 7.0+ out of 10, 90%+ functional rate
+- Premium: quality score 8.0+ out of 10, 95%+ functional rate
+- Elite: quality score 8.5+ out of 10, 100% functional rate
 
 ### 6. Deployment
 - Chat widget is installed on the client's website (single script tag)
@@ -77,10 +60,10 @@ Based on evaluation scores, agents receive a certification level:
 ## Client Dashboard
 
 Once deployed, clients have access to:
-- **Dashboard** - Overview of agent activity
-- **Conversations** - Full chat history with customers
-- **Analytics** - Usage statistics and performance metrics
-- **Settings** - Widget customization, voice settings
-- **Integrations** - Integration marketplace
-- **Billing** - Subscription management
-- **Live Support** - Real-time support monitoring
+- Dashboard with overview of agent activity
+- Full conversation history with customers
+- Usage statistics and performance metrics
+- Widget customization and voice settings
+- Integration marketplace
+- Subscription management
+- Real-time support monitoring
