@@ -10,9 +10,9 @@ The buyer's decision hinges on whether the gap between total investment and pote
 
 ### Acquisition Cost
 
-- Purchase price: EUR 600,000
+- Purchase price: EUR 900,000
 - Transaction costs (stamp duty, legal, notary, registration): typically 7-10% of purchase price in Portugal
-- Total acquisition: approximately EUR 640,000-660,000
+- Total acquisition: approximately EUR 965,000-990,000
 
 ### Development Cost Ranges (Algarve Market 2025-2026)
 
@@ -48,11 +48,11 @@ Industry standard for renovation projects: 10-20% of construction budget. For a 
 ### Scenario A: Boutique Wellness Retreat (20 rooms)
 
 Investment:
-- Acquisition: EUR 650,000
+- Acquisition: EUR 975,000
 - Development (mid-range, 3,000m2 fitted): EUR 3,000,000
 - Professional fees (8%): EUR 240,000
 - Contingency (15%): EUR 450,000
-- Total: approximately EUR 4.3M
+- Total: approximately EUR 4.7M
 
 Revenue potential:
 - 20 rooms x EUR 200 avg nightly rate x 70% occupancy x 365 days = EUR 1,022,000 gross
@@ -63,16 +63,16 @@ Revenue potential:
 
 Finished property value: A 20-room boutique wellness retreat in the Western Algarve with established operations: EUR 4-8M+
 
-At EUR 4.3M total investment generating EUR 400k+ net annual income, the yield is approximately 9-12% -- strong for hospitality real estate. If the finished property value reaches EUR 6M+, there's both income and capital appreciation.
+At EUR 4.7M total investment generating EUR 400k+ net annual income, the yield is approximately 8-11% -- strong for hospitality real estate. If the finished property value reaches EUR 6M+, there's both income and capital appreciation.
 
 ### Scenario B: Phased Development (Start Small)
 
 Phase 1 investment:
-- Acquisition: EUR 650,000
+- Acquisition: EUR 975,000
 - Develop ground floor only (restaurant + event space, ~1,500m2): EUR 1,200,000
 - Professional fees: EUR 100,000
 - Contingency: EUR 180,000
-- Phase 1 total: approximately EUR 2.1M
+- Phase 1 total: approximately EUR 2.4M
 
 Phase 1 revenue:
 - Restaurant and event venue generates immediate income
@@ -85,11 +85,11 @@ Lower upfront capital. Revenue starts sooner. The buyer proves the concept befor
 ### Scenario C: Purchase and Resell with Planning
 
 Investment:
-- Acquisition: EUR 650,000
+- Acquisition: EUR 975,000
 - Architect to develop a full conversion project with approvals: EUR 100,000-200,000
-- Total: approximately EUR 800,000-850,000
+- Total: approximately EUR 1.1M-1.2M
 
-Exit: Sell the property with an approved, shovel-ready development project to a hospitality developer or operator. A shell with EUR 600k asking price becomes significantly more valuable with an approved project attached -- the buyer has eliminated the planning risk and can go straight to construction.
+Exit: Sell the property with an approved, shovel-ready development project to a hospitality developer or operator. A shell with EUR 900k asking price becomes significantly more valuable with an approved project attached -- the buyer has eliminated the planning risk and can go straight to construction.
 
 Lower capital requirement. Shorter timeline (6-12 months). Profit comes from the planning value-add rather than construction. Suits investors who understand real estate entitlement but don't want to operate hospitality.
 
@@ -109,7 +109,7 @@ Golden Visa rules change frequently. Buyers should consult a specialist immigrat
 
 ### Tax Considerations
 
-- IMT (Property Transfer Tax): Scaled rate based on purchase price. For commercial property at EUR 600,000, approximately 6.5%.
+- IMT (Property Transfer Tax): Scaled rate based on purchase price. For commercial property at EUR 900,000, approximately 6.5%.
 - IS (Stamp Duty): 0.8% of purchase price.
 - IMI (Annual Property Tax): For commercial/industrial property, typically 0.3-0.8% of the tax value annually.
 - NHR (Non-Habitual Resident) Tax Regime: Previously offered significant tax benefits for new residents. The programme has undergone changes -- current benefits should be verified with a tax advisor.

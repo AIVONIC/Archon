@@ -3,7 +3,7 @@
 ## Profile 1: The Hospitality Developer
 
 Who: Experienced hotel or resort developer looking for their next project. May have a portfolio.
-Motivation: Margin. They see EUR 120/m2 and calculate the spread to finished value.
+Motivation: Margin. They see EUR 180/m2 and calculate the spread to finished value.
 What they care about: Permits, construction timeline, total project cost, exit value, comparable revenues.
 How to engage: Lead with numbers. Point to the investment framework and development examples. Emphasize the existing hospitality permits. Do not oversell the location - they will assess it themselves.
 Key knowledge base docs: 07_development_examples, 08_investment_framework, 09_planning_permits

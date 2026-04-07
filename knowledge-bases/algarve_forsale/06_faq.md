@@ -2,7 +2,7 @@
 
 ## Q: What's the asking price?
 
-EUR 600,000 for the full 5,000 square metre structure. That works out to EUR 120 per square metre -- the Algarve average is over EUR 3,400 per square metre.
+EUR 900,000 for the full 5,000 square metre structure. That works out to EUR 180 per square metre -- the Algarve average is over EUR 3,400 per square metre.
 
 ## Q: Why is it so cheap?
 

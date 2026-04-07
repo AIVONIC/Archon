@@ -50,7 +50,7 @@ Finished boutique hotels (10-30 rooms) in the Western Algarve have traded betwee
 
 Finished restaurants with permits in prime Western Algarve locations have traded between EUR 300,000 and EUR 1.5M depending on size, location, and licence value.
 
-The key comparison: The Burgau property at EUR 600,000 for 5,000m2 represents EUR 120/m2. A finished hospitality property in the same area would trade at EUR 2,000-5,000/m2 or more. Even accounting for development costs of EUR 500-1,500/m2 for fit-out, the gap between total investment and finished market value represents significant development upside.
+The key comparison: The Burgau property at EUR 900,000 for 5,000m2 represents EUR 180/m2. A finished hospitality property in the same area would trade at EUR 2,000-5,000/m2 or more. Even accounting for development costs of EUR 500-1,500/m2 for fit-out, the gap between total investment and finished market value represents significant development upside.
 
 ### The Western Algarve Premium
 

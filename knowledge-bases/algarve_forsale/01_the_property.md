@@ -10,8 +10,8 @@
 - Construction: Solid concrete
 - Condition: Clean industrial shell, project-ready. No demolition or cleanup required.
 - Original build permit: Spa, restaurant, and event space
-- Asking price: EUR 600,000
-- Price per square metre: EUR 120
+- Asking price: EUR 900,000
+- Price per square metre: EUR 180
 - Distance to beach: Approximately 400 metres to Praia de Burgau
 - Swimming pools: 2 existing pools on site
 - Water: Natural water abundance on the property
@@ -20,7 +20,7 @@
 
 ## Value Proposition
 
-The Algarve average property price reached approximately EUR 3,200-3,467 per square metre in 2025, with 16.6% year-on-year growth. This property at EUR 120/m2 represents approximately 3-4% of the regional average price per square metre. The significant gap reflects the shell condition -- this is a raw canvas, not a finished development. However, the combination of location, scale, existing structure, permits, pools, and water access creates substantial development upside.
+The Algarve average property price reached approximately EUR 3,200-3,467 per square metre in 2025, with 16.6% year-on-year growth. This property at EUR 180/m2 represents approximately 5% of the regional average price per square metre. The significant gap reflects the shell condition -- this is a raw canvas, not a finished development. However, the combination of location, scale, existing structure, permits, pools, and water access creates substantial development upside.
 
 Comparable finished hospitality properties in the western Algarve (Burgau, Lagos, Luz area) command EUR 3,000-5,000+ per square metre when developed.
 

@@ -30,7 +30,7 @@ From accepted offer to completion: approximately 4-12 weeks, though this can str
 
 ## Taxes and Costs
 
-- IMT (Municipal Transfer Tax): Progressive rate from 0% to approximately 8% depending on property value and type. For commercial/industrial property the rates may differ from residential. At EUR 600,000, expect to budget significant IMT costs -- exact amount depends on classification.
+- IMT (Municipal Transfer Tax): Progressive rate from 0% to approximately 8% depending on property value and type. For commercial/industrial property the rates may differ from residential. At EUR 900,000, expect to budget significant IMT costs -- exact amount depends on classification.
 - Stamp Duty (Imposto de Selo): 0.8% of the purchase price
 - Notary and registration fees: Typically EUR 500-1,500
 - Legal fees: Typically 1-2% of purchase price
