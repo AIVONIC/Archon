@@ -31,3 +31,4 @@ release-notes-*.md
 
 # Internal docs, not public
 docs/
+!docs/README.md
