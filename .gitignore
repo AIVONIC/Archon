@@ -28,3 +28,6 @@ UAT/
 
 # Local release notes testing
 release-notes-*.md
+
+# Internal docs, not public
+docs/
