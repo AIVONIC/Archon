@@ -35,6 +35,8 @@ class BaseSearchStrategy:
         Perform basic vector similarity search.
 
         This is the foundational semantic search that all strategies use.
+        Automatically detects embedding dimension and routes to the correct
+        multi-dimensional RPC function.
 
         Args:
             query_embedding: The embedding vector for the query
@@ -47,8 +49,19 @@ class BaseSearchStrategy:
         """
         with safe_span("base_vector_search", table=table_rpc, match_count=match_count) as span:
             try:
-                # Build RPC parameters
-                rpc_params = {"query_embedding": query_embedding, "match_count": match_count}
+                embedding_dim = len(query_embedding)
+
+                # Use multi-dimensional RPC for non-1536 embeddings
+                if embedding_dim != 1536:
+                    actual_rpc = table_rpc + "_multi" if not table_rpc.endswith("_multi") else table_rpc
+                    rpc_params = {
+                        "query_embedding": query_embedding,
+                        "embedding_dimension": embedding_dim,
+                        "match_count": match_count,
+                    }
+                else:
+                    actual_rpc = table_rpc
+                    rpc_params = {"query_embedding": query_embedding, "match_count": match_count}
 
                 # Add filter parameters
                 if filter_metadata:
@@ -61,7 +74,7 @@ class BaseSearchStrategy:
                     rpc_params["filter"] = {}
 
                 # Execute search
-                response = self.supabase_client.rpc(table_rpc, rpc_params).execute()
+                response = self.supabase_client.rpc(actual_rpc, rpc_params).execute()
 
                 # Filter by similarity threshold
                 filtered_results = []
