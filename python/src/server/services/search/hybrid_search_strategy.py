@@ -13,10 +13,9 @@ Strategy combines:
 
 from typing import Any
 
-from supabase import Client
-
 from ...config.logfire_config import get_logger, safe_span
 from ..embeddings.embedding_service import create_embedding
+from ..storage import DatabaseBackend
 
 logger = get_logger(__name__)
 
@@ -24,9 +23,42 @@ logger = get_logger(__name__)
 class HybridSearchStrategy:
     """Strategy class implementing hybrid search combining vector and full-text search"""
 
-    def __init__(self, supabase_client: Client, base_strategy):
-        self.supabase_client = supabase_client
+    def __init__(self, backend: DatabaseBackend, base_strategy):
+        self.backend = backend
         self.base_strategy = base_strategy
+
+    @staticmethod
+    def _build_hybrid_rpc(
+        base_function: str,
+        query_embedding: list[float],
+        query: str,
+        match_count: int,
+        filter_json: dict,
+        source_filter: str | None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Pick the hybrid search function and arguments for the embedding's dimension.
+
+        The 1536 functions are fixed-dimension; every other dimension (production
+        runs 384) routes through the ``_multi`` variant, which takes an explicit
+        ``embedding_dimension`` and selects the matching embedding column.
+        """
+        embedding_dim = len(query_embedding)
+        if embedding_dim != 1536:
+            return f"{base_function}_multi", {
+                "query_embedding": query_embedding,
+                "embedding_dimension": embedding_dim,
+                "query_text": query,
+                "match_count": match_count,
+                "filter": filter_json,
+                "source_filter": source_filter,
+            }
+        return base_function, {
+            "query_embedding": query_embedding,
+            "query_text": query,
+            "match_count": match_count,
+            "filter": filter_json,
+            "source_filter": source_filter,
+        }
 
     async def search_documents_hybrid(
         self,
@@ -54,25 +86,28 @@ class HybridSearchStrategy:
                 filter_json = filter_metadata or {}
                 source_filter = filter_json.pop("source", None) if "source" in filter_json else None
 
-                # Call the hybrid search PostgreSQL function
-                response = self.supabase_client.rpc(
+                # Route to the dimension-aware function for non-1536 embeddings
+                # (production embeds at 384) so the dense half of the fusion uses
+                # the correct embedding column.
+                rpc_name, rpc_params = self._build_hybrid_rpc(
                     "hybrid_search_archon_crawled_pages",
-                    {
-                        "query_embedding": query_embedding,
-                        "query_text": query,
-                        "match_count": match_count,
-                        "filter": filter_json,
-                        "source_filter": source_filter,
-                    },
-                ).execute()
+                    query_embedding,
+                    query,
+                    match_count,
+                    filter_json,
+                    source_filter,
+                )
 
-                if not response.data:
+                # Call the hybrid search PostgreSQL function
+                rows = await self.backend.rpc(rpc_name, rpc_params)
+
+                if not rows:
                     logger.debug("No results from hybrid search")
                     return []
 
                 # Format results to match expected structure
                 results = []
-                for row in response.data:
+                for row in rows:
                     result = {
                         "id": row["id"],
                         "url": row["url"],
@@ -141,25 +176,26 @@ class HybridSearchStrategy:
                 if not final_source_filter and "source" in filter_json:
                     final_source_filter = filter_json.pop("source")
 
-                # Call the hybrid search PostgreSQL function
-                response = self.supabase_client.rpc(
+                # Route to the dimension-aware function for non-1536 embeddings.
+                rpc_name, rpc_params = self._build_hybrid_rpc(
                     "hybrid_search_archon_code_examples",
-                    {
-                        "query_embedding": query_embedding,
-                        "query_text": query,
-                        "match_count": match_count,
-                        "filter": filter_json,
-                        "source_filter": final_source_filter,
-                    },
-                ).execute()
+                    query_embedding,
+                    query,
+                    match_count,
+                    filter_json,
+                    final_source_filter,
+                )
 
-                if not response.data:
+                # Call the hybrid search PostgreSQL function
+                rows = await self.backend.rpc(rpc_name, rpc_params)
+
+                if not rows:
                     logger.debug("No results from hybrid code search")
                     return []
 
                 # Format results to match expected structure
                 results = []
-                for row in response.data:
+                for row in rows:
                     result = {
                         "id": row["id"],
                         "url": row["url"],

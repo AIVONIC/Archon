@@ -16,8 +16,8 @@ import os
 from typing import Any
 
 from ...config.logfire_config import get_logger, safe_span
-from ...utils import get_supabase_client
 from ..embeddings.embedding_service import create_embedding
+from ..storage import DatabaseBackend, get_database_backend
 from .agentic_rag_strategy import AgenticRAGStrategy
 
 # Import all strategies
@@ -36,16 +36,16 @@ class RAGService:
     based on configuration settings.
     """
 
-    def __init__(self, supabase_client=None):
+    def __init__(self, backend: DatabaseBackend | None = None):
         """Initialize RAG service as a coordinator for search strategies"""
-        self.supabase_client = supabase_client or get_supabase_client()
+        self.backend = backend or get_database_backend()
 
         # Initialize base strategy (always needed)
-        self.base_strategy = BaseSearchStrategy(self.supabase_client)
+        self.base_strategy = BaseSearchStrategy(self.backend)
 
         # Initialize optional strategies
-        self.hybrid_strategy = HybridSearchStrategy(self.supabase_client, self.base_strategy)
-        self.agentic_strategy = AgenticRAGStrategy(self.supabase_client, self.base_strategy)
+        self.hybrid_strategy = HybridSearchStrategy(self.backend, self.base_strategy)
+        self.agentic_strategy = AgenticRAGStrategy(self.backend, self.base_strategy)
 
         # Initialize reranking strategy based on settings
         self.reranking_strategy = None
@@ -202,36 +202,23 @@ class RAGService:
             page_groups[group_key]["total_similarity"] += result.get("similarity_score", 0.0)
 
         page_results = []
-        for group_key, data in page_groups.items():
+        for data in page_groups.values():
             avg_similarity = data["total_similarity"] / data["chunk_matches"]
             match_boost = min(0.2, data["chunk_matches"] * 0.02)
             aggregate_score = avg_similarity * (1 + match_boost)
 
-            # Query page by page_id if available, otherwise by URL
-            if data["page_id"]:
-                page_info = (
-                    self.supabase_client.table("archon_page_metadata")
-                    .select("id, url, section_title, word_count")
-                    .eq("id", data["page_id"])
-                    .maybe_single()
-                    .execute()
-                )
-            else:
-                # Regular pages - exact URL match
-                page_info = (
-                    self.supabase_client.table("archon_page_metadata")
-                    .select("id, url, section_title, word_count")
-                    .eq("url", data["url"])
-                    .maybe_single()
-                    .execute()
-                )
+            # Query page by page_id if available, otherwise by exact URL match
+            match = {"id": data["page_id"]} if data["page_id"] else {"url": data["url"]}
+            page_info = await self.backend.select_one(
+                "archon_page_metadata", "id, url, section_title, word_count", match
+            )
 
-            if page_info and page_info.data is not None:
+            if page_info is not None:
                 page_results.append({
-                    "page_id": page_info.data["id"],
-                    "url": page_info.data["url"],
-                    "section_title": page_info.data.get("section_title"),
-                    "word_count": page_info.data.get("word_count", 0),
+                    "page_id": page_info["id"],
+                    "url": page_info["url"],
+                    "section_title": page_info.get("section_title"),
+                    "word_count": page_info.get("word_count", 0),
                     "chunk_matches": data["chunk_matches"],
                     "aggregate_similarity": aggregate_score,
                     "average_similarity": avg_similarity,

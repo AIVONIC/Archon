@@ -1118,7 +1118,7 @@ async def perform_rag_query(request: RagQueryRequest):
 
     try:
         # Use RAGService for unified RAG query with return_mode support
-        search_service = RAGService(get_supabase_client())
+        search_service = RAGService()
         success, result = await search_service.perform_rag_query(
             query=request.query,
             source=request.source,
@@ -1148,7 +1148,7 @@ async def search_code_examples(request: RagQueryRequest):
     """Search for code examples relevant to the query using dedicated code examples service."""
     try:
         # Use RAGService for code examples search
-        search_service = RAGService(get_supabase_client())
+        search_service = RAGService()
         success, result = await search_service.search_code_examples_service(
             query=request.query,
             source_id=request.source,  # This is Optional[str] which matches the method signature

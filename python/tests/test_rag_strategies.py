@@ -52,7 +52,7 @@ class TestRAGService:
         """Create RAGService instance"""
         from src.server.services.search import RAGService
 
-        return RAGService(supabase_client=mock_supabase_client)
+        return RAGService(backend=mock_supabase_client)
 
     def test_rag_service_initialization(self, rag_service):
         """Test RAGService initializes correctly"""
@@ -270,7 +270,7 @@ class TestRAGIntegration:
         """Create RAGService instance"""
         from src.server.services.search import RAGService
 
-        return RAGService(supabase_client=mock_supabase_client)
+        return RAGService(backend=mock_supabase_client)
 
     @pytest.mark.asyncio
     async def test_full_rag_pipeline(self, rag_service):
@@ -362,7 +362,7 @@ class TestRAGPerformance:
         from src.server.services.search import RAGService
 
         mock_client = MagicMock()
-        return RAGService(supabase_client=mock_client)
+        return RAGService(backend=mock_client)
 
     @pytest.mark.asyncio
     async def test_concurrent_rag_queries(self, rag_service):
@@ -443,7 +443,7 @@ class TestRAGConfiguration:
         from src.server.services.search import RAGService
 
         mock_client = MagicMock()
-        return RAGService(supabase_client=mock_client)
+        return RAGService(backend=mock_client)
 
     def test_environment_variable_settings(self, rag_service):
         """Test reading settings from environment variables"""

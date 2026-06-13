@@ -10,8 +10,16 @@ from .code_storage_service import (
     extract_code_blocks,
     generate_code_example_summary,
 )
+from .database_backend import DatabaseBackend
 from .document_storage_service import add_documents_to_supabase
+from .factory import (
+    get_database_backend,
+    reset_database_backend,
+    set_database_backend,
+)
+from .postgres_backend import PostgresBackend
 from .storage_services import DocumentStorageService
+from .supabase_backend import SupabaseBackend
 
 __all__ = [
     # Base service
@@ -24,4 +32,11 @@ __all__ = [
     "extract_code_blocks",
     "generate_code_example_summary",
     "add_code_examples_to_supabase",
+    # Database backend abstraction
+    "DatabaseBackend",
+    "PostgresBackend",
+    "SupabaseBackend",
+    "get_database_backend",
+    "set_database_backend",
+    "reset_database_backend",
 ]

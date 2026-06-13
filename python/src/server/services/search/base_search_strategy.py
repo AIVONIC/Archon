@@ -7,9 +7,8 @@ This is the core semantic search functionality.
 
 from typing import Any
 
-from supabase import Client
-
 from ...config.logfire_config import get_logger, safe_span
+from ..storage import DatabaseBackend
 
 logger = get_logger(__name__)
 
@@ -20,9 +19,9 @@ SIMILARITY_THRESHOLD = 0.05
 class BaseSearchStrategy:
     """Base strategy implementing fundamental vector similarity search"""
 
-    def __init__(self, supabase_client: Client):
-        """Initialize with database client"""
-        self.supabase_client = supabase_client
+    def __init__(self, backend: DatabaseBackend):
+        """Initialize with the database backend"""
+        self.backend = backend
 
     async def vector_search(
         self,
@@ -74,21 +73,17 @@ class BaseSearchStrategy:
                     rpc_params["filter"] = {}
 
                 # Execute search
-                response = self.supabase_client.rpc(actual_rpc, rpc_params).execute()
+                rows = await self.backend.rpc(actual_rpc, rpc_params)
 
                 # Filter by similarity threshold
                 filtered_results = []
-                if response.data:
-                    for result in response.data:
-                        similarity = float(result.get("similarity", 0.0))
-                        if similarity >= SIMILARITY_THRESHOLD:
-                            filtered_results.append(result)
+                for result in rows:
+                    similarity = float(result.get("similarity", 0.0))
+                    if similarity >= SIMILARITY_THRESHOLD:
+                        filtered_results.append(result)
 
                 span.set_attribute("results_found", len(filtered_results))
-                span.set_attribute(
-                    "results_filtered",
-                    len(response.data) - len(filtered_results) if response.data else 0,
-                )
+                span.set_attribute("results_filtered", len(rows) - len(filtered_results))
 
                 return filtered_results
 

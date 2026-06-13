@@ -6,7 +6,7 @@ These tests verify the core RAG functionality without heavy dependencies.
 """
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -22,23 +22,21 @@ os.environ.update({
 
 
 @pytest.fixture
-def mock_supabase():
-    """Mock supabase client"""
-    client = MagicMock()
-    client.rpc.return_value.execute.return_value.data = []
-    client.from_.return_value.select.return_value.limit.return_value.execute.return_value.data = []
-    return client
+def mock_backend():
+    """Mock database backend (transport-agnostic)"""
+    backend = MagicMock()
+    backend.rpc = AsyncMock(return_value=[])
+    backend.select_one = AsyncMock(return_value=None)
+    return backend
 
 
 @pytest.fixture
-def rag_service(mock_supabase):
-    """Create RAGService with mocked dependencies"""
-    with patch("src.server.utils.get_supabase_client", return_value=mock_supabase):
-        with patch("src.server.services.credential_service.credential_service"):
-            from src.server.services.search.rag_service import RAGService
+def rag_service(mock_backend):
+    """Create RAGService with a mocked database backend"""
+    with patch("src.server.services.credential_service.credential_service"):
+        from src.server.services.search.rag_service import RAGService
 
-            service = RAGService(supabase_client=mock_supabase)
-            return service
+        return RAGService(backend=mock_backend)
 
 
 class TestRAGServiceCore:
@@ -66,11 +64,10 @@ class TestRAGServiceSearch:
     """Search functionality tests"""
 
     @pytest.mark.asyncio
-    async def test_basic_vector_search(self, rag_service, mock_supabase):
+    async def test_basic_vector_search(self, rag_service, mock_backend):
         """Test basic vector search functionality"""
         # Mock the RPC response
-        mock_response = MagicMock()
-        mock_response.data = [
+        mock_backend.rpc.return_value = [
             {
                 "id": "1",
                 "content": "Test content",
@@ -79,7 +76,6 @@ class TestRAGServiceSearch:
                 "url": "test.com",
             }
         ]
-        mock_supabase.rpc.return_value.execute.return_value = mock_response
 
         # Test the search
         query_embedding = [0.1] * 1536
@@ -91,9 +87,9 @@ class TestRAGServiceSearch:
         assert len(results) == 1
         assert results[0]["content"] == "Test content"
 
-        # Verify RPC was called correctly
-        mock_supabase.rpc.assert_called_once()
-        call_args = mock_supabase.rpc.call_args[0]
+        # Verify RPC was called correctly (1536-dim routes to the non-multi function)
+        mock_backend.rpc.assert_called_once()
+        call_args = mock_backend.rpc.call_args[0]
         assert call_args[0] == "match_archon_crawled_pages"
 
     @pytest.mark.asyncio
@@ -150,13 +146,13 @@ class TestHybridSearchCore:
     """Basic hybrid search tests"""
 
     @pytest.fixture
-    def hybrid_strategy(self, mock_supabase):
+    def hybrid_strategy(self, mock_backend):
         """Create hybrid search strategy"""
         from src.server.services.search.base_search_strategy import BaseSearchStrategy
         from src.server.services.search.hybrid_search_strategy import HybridSearchStrategy
 
-        base_strategy = BaseSearchStrategy(mock_supabase)
-        return HybridSearchStrategy(mock_supabase, base_strategy)
+        base_strategy = BaseSearchStrategy(mock_backend)
+        return HybridSearchStrategy(mock_backend, base_strategy)
 
     def test_initialization(self, hybrid_strategy):
         """Test hybrid strategy initializes"""
@@ -234,13 +230,13 @@ class TestAgenticRAGCore:
     """Basic agentic RAG tests"""
 
     @pytest.fixture
-    def agentic_strategy(self, mock_supabase):
+    def agentic_strategy(self, mock_backend):
         """Create agentic RAG strategy"""
         from src.server.services.search.agentic_rag_strategy import AgenticRAGStrategy
         from src.server.services.search.base_search_strategy import BaseSearchStrategy
 
-        base_strategy = BaseSearchStrategy(mock_supabase)
-        return AgenticRAGStrategy(mock_supabase, base_strategy)
+        base_strategy = BaseSearchStrategy(mock_backend)
+        return AgenticRAGStrategy(mock_backend, base_strategy)
 
     def test_initialization(self, agentic_strategy):
         """Test agentic strategy initializes"""
@@ -292,7 +288,7 @@ class TestRAGIntegrationSimple:
             assert len(result["results"]) == 0
 
     @pytest.mark.asyncio
-    async def test_full_rag_pipeline_with_reranking(self, rag_service, mock_supabase):
+    async def test_full_rag_pipeline_with_reranking(self, rag_service):
         """Test complete RAG pipeline with reranking enabled"""
         # Create a mock reranking model
         mock_model = MagicMock()
