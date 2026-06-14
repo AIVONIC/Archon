@@ -1,13 +1,10 @@
 """Integration tests for crawl orchestration progress tracking."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 import pytest
 
 from src.server.services.crawling.crawling_service import CrawlingService
-from src.server.services.crawling.progress_mapper import ProgressMapper
-from src.server.utils.progress.progress_tracker import ProgressTracker
-from tests.progress_tracking.utils.test_helpers import ProgressTestHelper
 
 
 @pytest.fixture
@@ -37,7 +34,7 @@ def crawling_service(mock_crawler, crawl_progress_mock_supabase_client):
     """Create a CrawlingService instance for testing."""
     service = CrawlingService(
         crawler=mock_crawler,
-        supabase_client=crawl_progress_mock_supabase_client,
+        backend=crawl_progress_mock_supabase_client,
         progress_id="test-crawl-123"
     )
     # Initialize progress tracker for testing
@@ -93,7 +90,6 @@ class TestCrawlOrchestrationProgressIntegration:
             "tags": ["test"]
         }
         
-        urls_to_crawl = [f"https://example.com/page{i}" for i in range(1, 61)]
         
         # Execute the crawl (using internal orchestration method would be ideal)
         # For now, test the document storage orchestration part

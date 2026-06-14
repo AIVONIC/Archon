@@ -14,7 +14,7 @@ from typing import Any, Optional
 import tldextract
 
 from ...config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
-from ...utils import get_supabase_client
+from ..storage import get_database_backend
 from ...utils.progress.progress_tracker import ProgressTracker
 from ..credential_service import credential_service
 
@@ -102,17 +102,17 @@ class CrawlingService:
     Combines functionality from both CrawlingService and CrawlOrchestrationService.
     """
 
-    def __init__(self, crawler=None, supabase_client=None, progress_id=None):
+    def __init__(self, crawler=None, backend=None, progress_id=None):
         """
         Initialize the crawling service.
 
         Args:
             crawler: The Crawl4AI crawler instance
-            supabase_client: The Supabase client for database operations
+            backend: The database backend for database operations
             progress_id: Optional progress ID for HTTP polling updates
         """
         self.crawler = crawler
-        self.supabase_client = supabase_client or get_supabase_client()
+        self.backend = backend or get_database_backend()
         self.progress_id = progress_id
         self.progress_tracker = None
 
@@ -129,9 +129,9 @@ class CrawlingService:
         self.sitemap_strategy = SitemapCrawlStrategy()
 
         # Initialize operations
-        self.doc_storage_ops = DocumentStorageOperations(self.supabase_client)
+        self.doc_storage_ops = DocumentStorageOperations(self.backend)
         self.discovery_service = DiscoveryService()
-        self.page_storage_ops = PageStorageOperations(self.supabase_client)
+        self.page_storage_ops = PageStorageOperations(self.backend)
 
         # Track progress state across all stages to prevent UI resets
         self.progress_state = {"progressId": self.progress_id} if self.progress_id else {}

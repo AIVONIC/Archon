@@ -9,8 +9,8 @@ class TestCrawlingServiceSubdomain:
     @pytest.fixture
     def service(self):
         """Create a CrawlingService instance for testing."""
-        # Create service without crawler or supabase for testing domain checking
-        return CrawlingService(crawler=None, supabase_client=None)
+        # Create service without crawler or backend for testing domain checking
+        return CrawlingService(crawler=None, backend=None)
 
     def test_is_same_domain_or_subdomain_exact_match(self, service):
         """Test exact domain matches."""

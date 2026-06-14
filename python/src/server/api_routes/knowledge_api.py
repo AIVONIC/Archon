@@ -13,7 +13,11 @@ import asyncio
 import json
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from ..utils.progress.progress_tracker import ProgressTracker
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -29,7 +33,7 @@ from ..services.embeddings.provider_error_adapters import ProviderErrorFactory
 from ..services.knowledge import DatabaseMetricsService, KnowledgeItemService, KnowledgeSummaryService
 from ..services.search.rag_service import RAGService
 from ..services.storage import DocumentStorageService
-from ..utils import get_supabase_client
+from ..services.storage import get_database_backend
 from ..utils.document_processing import extract_text_from_document
 
 # Get logger for this module
@@ -242,7 +246,7 @@ async def get_knowledge_items(
     """Get knowledge items with pagination and filtering."""
     try:
         # Use KnowledgeItemService
-        service = KnowledgeItemService(get_supabase_client())
+        service = KnowledgeItemService()
         result = await service.list_items(
             page=page, per_page=per_page, knowledge_type=knowledge_type, search=search
         )
@@ -273,7 +277,7 @@ async def get_knowledge_items_summary(
         # Input guards
         page = max(1, page)
         per_page = min(100, max(1, per_page))
-        service = KnowledgeSummaryService(get_supabase_client())
+        service = KnowledgeSummaryService()
         result = await service.get_summaries(
             page=page, per_page=per_page, knowledge_type=knowledge_type, search=search
         )
@@ -291,7 +295,7 @@ async def update_knowledge_item(source_id: str, updates: dict):
     """Update a knowledge item's metadata."""
     try:
         # Use KnowledgeItemService
-        service = KnowledgeItemService(get_supabase_client())
+        service = KnowledgeItemService()
         success, result = await service.update_item(source_id, updates)
 
         if success:
@@ -322,11 +326,11 @@ async def delete_knowledge_item(source_id: str):
         logger.debug("Creating SourceManagementService...")
         from ..services.source_management_service import SourceManagementService
 
-        source_service = SourceManagementService(get_supabase_client())
+        source_service = SourceManagementService()
         logger.debug("Successfully created SourceManagementService")
 
         logger.debug("Calling delete_source function...")
-        success, result_data = source_service.delete_source(source_id)
+        success, result_data = await source_service.delete_source(source_id)
         logger.debug(f"delete_source returned: success={success}, data={result_data}")
 
         # Convert to expected format
@@ -390,22 +394,22 @@ async def get_knowledge_item_chunks(
             f"limit={limit} | offset={offset}"
         )
 
-        supabase = get_supabase_client()
+        backend = get_database_backend()
 
         # First get total count
-        count_query = supabase.from_("archon_crawled_pages").select(
-            "id", count="exact", head=True
+        count_query = backend.table("archon_crawled_pages").select(
+            "id", count="exact"
         )
         count_query = count_query.eq("source_id", source_id)
 
         if domain_filter:
             count_query = count_query.ilike("url", f"%{domain_filter}%")
 
-        count_result = count_query.execute()
+        count_result = await count_query.execute()
         total = count_result.count if hasattr(count_result, "count") else 0
 
         # Build the main query with pagination
-        query = supabase.from_("archon_crawled_pages").select(
+        query = backend.table("archon_crawled_pages").select(
             "id, source_id, content, metadata, url"
         )
         query = query.eq("source_id", source_id)
@@ -420,7 +424,7 @@ async def get_knowledge_item_chunks(
         # Apply pagination
         query = query.range(offset, offset + limit - 1)
 
-        result = query.execute()
+        result = await query.execute()
         # Check for error more explicitly to work with mocks
         if hasattr(result, "error") and result.error is not None:
             safe_logfire_error(
@@ -546,20 +550,20 @@ async def get_knowledge_item_code_examples(
             f"Fetching code examples | source_id={source_id} | limit={limit} | offset={offset}"
         )
 
-        supabase = get_supabase_client()
+        backend = get_database_backend()
 
         # First get total count
-        count_result = (
-            supabase.from_("archon_code_examples")
-            .select("id", count="exact", head=True)
+        count_result = await (
+            backend.table("archon_code_examples")
+            .select("id", count="exact")
             .eq("source_id", source_id)
             .execute()
         )
         total = count_result.count if hasattr(count_result, "count") else 0
 
         # Get paginated code examples
-        result = (
-            supabase.from_("archon_code_examples")
+        result = await (
+            backend.table("archon_code_examples")
             .select("id, source_id, content, summary, metadata")
             .eq("source_id", source_id)
             .order("id", desc=False)  # Deterministic ordering
@@ -624,7 +628,7 @@ async def refresh_knowledge_item(source_id: str):
         safe_logfire_info(f"Starting knowledge item refresh | source_id={source_id}")
 
         # Get the existing knowledge item
-        service = KnowledgeItemService(get_supabase_client())
+        service = KnowledgeItemService()
         existing_item = await service.get_item(source_id)
 
         if not existing_item:
@@ -675,7 +679,7 @@ async def refresh_knowledge_item(source_id: str):
 
         # Use the same crawl orchestration as regular crawl
         crawl_service = CrawlingService(
-            crawler=crawler, supabase_client=get_supabase_client()
+            crawler=crawler
         )
         crawl_service.set_progress_id(progress_id)
 
@@ -828,8 +832,7 @@ async def _perform_crawl_with_progress(
                 await tracker.error(f"Failed to initialize crawler: {str(e)}")
                 return
 
-            supabase_client = get_supabase_client()
-            orchestration_service = CrawlingService(crawler, supabase_client)
+            orchestration_service = CrawlingService(crawler)
             orchestration_service.set_progress_id(progress_id)
 
             # Convert request to dict for service
@@ -1028,7 +1031,7 @@ async def _perform_upload_with_progress(
             return
 
         # Use DocumentStorageService to handle the upload
-        doc_storage_service = DocumentStorageService(get_supabase_client())
+        doc_storage_service = DocumentStorageService()
 
         # Generate source_id from filename with UUID to prevent collisions
         source_id = f"file_{filename.replace(' ', '_').replace('.', '_')}_{uuid.uuid4().hex[:8]}"
@@ -1191,7 +1194,7 @@ async def get_available_sources():
     """Get all available sources for RAG queries."""
     try:
         # Use KnowledgeItemService
-        service = KnowledgeItemService(get_supabase_client())
+        service = KnowledgeItemService()
         result = await service.get_available_sources()
 
         # Parse result if it's a string
@@ -1213,9 +1216,9 @@ async def delete_source(source_id: str):
         # Use SourceManagementService directly
         from ..services.source_management_service import SourceManagementService
 
-        source_service = SourceManagementService(get_supabase_client())
+        source_service = SourceManagementService()
 
-        success, result_data = source_service.delete_source(source_id)
+        success, result_data = await source_service.delete_source(source_id)
 
         if success:
             safe_logfire_info(f"Source deleted successfully | source_id={source_id}")
@@ -1244,7 +1247,7 @@ async def get_database_metrics():
     """Get database metrics and statistics."""
     try:
         # Use DatabaseMetricsService
-        service = DatabaseMetricsService(get_supabase_client())
+        service = DatabaseMetricsService()
         metrics = await service.get_metrics()
         return metrics
     except Exception as e:

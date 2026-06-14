@@ -420,10 +420,10 @@ async def discover_and_store_models_endpoint(request: ModelDiscoveryAndStoreRequ
     try:
         logger.info(f"Starting model discovery and storage for {len(request.instance_urls)} instances")
 
-        from ..utils import get_supabase_client
+        from ..services.storage import get_database_backend
 
         # Store using direct database insert
-        supabase = get_supabase_client()
+        backend = get_database_backend()
 
         stored_models = []
         instances_checked = 0
@@ -473,7 +473,7 @@ async def discover_and_store_models_endpoint(request: ModelDiscoveryAndStoreRequ
         }
 
         # Upsert into archon_settings table
-        result = supabase.table("archon_settings").upsert({
+        await backend.table("archon_settings").upsert({
             "key": "ollama_discovered_models",
             "value": json.dumps(models_data),
             "category": "ollama",
@@ -507,11 +507,11 @@ async def get_stored_models_endpoint() -> ModelListResponse:
     try:
         logger.info("Retrieving stored Ollama models")
 
-        from ..utils import get_supabase_client
-        supabase = get_supabase_client()
+        from ..services.storage import get_database_backend
+        backend = get_database_backend()
 
         # Get stored models from archon_settings
-        result = supabase.table("archon_settings").select("value").eq("key", "ollama_discovered_models").execute()
+        result = await backend.table("archon_settings").select("value").eq("key", "ollama_discovered_models").execute()
         models_setting = result.data[0]["value"] if result.data else None
 
         if not models_setting:
@@ -601,7 +601,6 @@ async def _warm_model_cache(instance_urls: list[str]) -> None:
 # Helper functions for model assessment and analysis
 async def _assess_archon_compatibility_with_testing(model, instance_url: str) -> dict[str, Any]:
     """Assess Archon compatibility for a given model using actual capability testing."""
-    model_name = model.name.lower()
     capabilities = getattr(model, 'capabilities', [])
     
     # Test actual model capabilities
@@ -967,9 +966,9 @@ async def discover_models_with_real_details(request: ModelDiscoveryAndStoreReque
 
         import httpx
 
-        from ..utils import get_supabase_client
+        from ..services.storage import get_database_backend
 
-        supabase = get_supabase_client()
+        backend = get_database_backend()
         stored_models = []
         instances_checked = 0
 
@@ -1117,7 +1116,7 @@ async def discover_models_with_real_details(request: ModelDiscoveryAndStoreReque
         logger.info(f"Storing {len(embedding_models_with_dims)} embedding models with dimensions: {[(m['name'], m.get('embedding_dimensions')) for m in embedding_models_with_dims]}")
 
         # Update the stored models
-        result = supabase.table("archon_settings").update({
+        await backend.table("archon_settings").update({
             "value": json.dumps(models_data),
             "description": "Real Ollama model data from API endpoints",
             "updated_at": datetime.now().isoformat()

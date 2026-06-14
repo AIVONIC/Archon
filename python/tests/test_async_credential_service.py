@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.fake_backend import FakeBackend
 from src.server.services.credential_service import (
     credential_service,
     get_credential,
@@ -131,16 +132,14 @@ class TestAsyncCredentialService:
                 "description": "Test key",
             }
         ]
-        mock_table.select().execute.return_value = mock_response
+        backend = FakeBackend(data=mock_response.data)
 
-        with patch.object(credential_service, "_get_supabase_client", return_value=mock_client):
+        with patch.object(credential_service, "_get_backend", return_value=backend):
             result = await credential_service.get_credential("TEST_KEY", "default")
             assert result == "db_value"
 
-            # Should have called database to load all credentials
-            mock_table.select.assert_called_with("*")
-            # Should have called execute on the query
-            assert mock_table.select().execute.called
+            # Should have queried all settings to populate the cache
+            assert any(call[0] == "select" and call[1] == ("*",) for call in backend.calls)
 
     @pytest.mark.asyncio
     async def test_get_credential_not_found_in_db(self, mock_supabase_client):
@@ -150,9 +149,9 @@ class TestAsyncCredentialService:
         # Mock empty database response
         mock_response = MagicMock()
         mock_response.data = []
-        mock_table.select().eq().execute.return_value = mock_response
+        backend = FakeBackend(data=mock_response.data)
 
-        with patch.object(credential_service, "_get_supabase_client", return_value=mock_client):
+        with patch.object(credential_service, "_get_backend", return_value=backend):
             result = await credential_service.get_credential("MISSING_KEY", "default_value")
             assert result == "default_value"
 
@@ -164,14 +163,14 @@ class TestAsyncCredentialService:
         # Mock successful insert
         mock_response = MagicMock()
         mock_response.data = [{"id": 1, "key": "NEW_KEY", "value": "new_value"}]
-        mock_table.insert().execute.return_value = mock_response
+        backend = FakeBackend(data=mock_response.data)
 
-        with patch.object(credential_service, "_get_supabase_client", return_value=mock_client):
+        with patch.object(credential_service, "_get_backend", return_value=backend):
             result = await set_credential("NEW_KEY", "new_value", is_encrypted=False)
             assert result is True
 
-            # Should have attempted insert
-            mock_table.insert.assert_called_once()
+            # Should have upserted (upsert avoids primary-key races)
+            assert any(call[0] == "upsert" for call in backend.calls)
 
     @pytest.mark.asyncio
     async def test_set_credential_encrypted(self, mock_supabase_client):
@@ -181,9 +180,9 @@ class TestAsyncCredentialService:
         # Mock successful insert
         mock_response = MagicMock()
         mock_response.data = [{"id": 1, "key": "SECRET_KEY"}]
-        mock_table.insert().execute.return_value = mock_response
+        backend = FakeBackend(data=mock_response.data)
 
-        with patch.object(credential_service, "_get_supabase_client", return_value=mock_client):
+        with patch.object(credential_service, "_get_backend", return_value=backend):
             with patch.object(credential_service, "_encrypt_value", return_value="encrypted_value"):
                 result = await set_credential("SECRET_KEY", "secret_value", is_encrypted=True)
                 assert result is True
@@ -199,10 +198,10 @@ class TestAsyncCredentialService:
         # Mock database response
         mock_response = MagicMock()
         mock_response.data = sample_credentials_data
-        mock_table.select().execute.return_value = mock_response
+        backend = FakeBackend(data=mock_response.data)
 
-        with patch.object(credential_service, "_get_supabase_client", return_value=mock_client):
-            result = await credential_service.load_all_credentials()
+        with patch.object(credential_service, "_get_backend", return_value=backend):
+            await credential_service.load_all_credentials()
 
             # Should have loaded credentials into cache
             assert credential_service._cache_initialized is True
@@ -228,9 +227,9 @@ class TestAsyncCredentialService:
         # Simple mock response
         mock_response = MagicMock()
         mock_response.data = []
-        mock_table.select().eq().execute.return_value = mock_response
+        backend = FakeBackend(data=mock_response.data)
 
-        with patch.object(credential_service, "_get_supabase_client", return_value=mock_client):
+        with patch.object(credential_service, "_get_backend", return_value=backend):
             result = await credential_service.get_active_provider("llm")
             # Should return default values when no settings found
             assert "provider" in result
@@ -244,9 +243,9 @@ class TestAsyncCredentialService:
         # Mock database response
         mock_response = MagicMock()
         mock_response.data = sample_credentials_data
-        mock_table.select().execute.return_value = mock_response
+        backend = FakeBackend(data=mock_response.data)
 
-        with patch.object(credential_service, "_get_supabase_client", return_value=mock_client):
+        with patch.object(credential_service, "_get_backend", return_value=backend):
             with patch.object(credential_service, "_decrypt_value", return_value="decrypted_key"):
                 with patch.dict(os.environ, {}):  # Clear specific environment variables
                     await initialize_credentials()
@@ -260,14 +259,14 @@ class TestAsyncCredentialService:
     @pytest.mark.asyncio
     async def test_error_handling_database_failure(self, mock_supabase_client):
         """Test error handling when database fails"""
-        mock_client, mock_table = mock_supabase_client
+        # A backend that raises when queried simulates a database failure.
+        class _FailingBackend:
+            def table(self, name):
+                raise Exception("Database connection failed")
 
-        # Mock database error
-        mock_table.select().eq().execute.side_effect = Exception("Database connection failed")
-
-        with patch.object(credential_service, "_get_supabase_client", return_value=mock_client):
-            result = await credential_service.get_credential("TEST_KEY", "default_value")
-            assert result == "default_value"
+        with patch.object(credential_service, "_get_backend", return_value=_FailingBackend()):
+            with pytest.raises(Exception, match="Database connection failed"):
+                await credential_service.get_credential("TEST_KEY", "default_value")
 
     @pytest.mark.asyncio
     async def test_encryption_decryption_error_handling(self):

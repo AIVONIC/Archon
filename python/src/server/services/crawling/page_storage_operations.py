@@ -10,6 +10,7 @@ from typing import Any
 from postgrest.exceptions import APIError
 
 from ...config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
+from ..storage import DatabaseBackend, get_database_backend
 from .helpers.llms_full_parser import parse_llms_full_sections
 
 logger = get_logger(__name__)
@@ -23,14 +24,14 @@ class PageStorageOperations:
     This enables agents to retrieve complete documentation pages instead of just chunks.
     """
 
-    def __init__(self, supabase_client):
+    def __init__(self, backend: DatabaseBackend | None = None):
         """
         Initialize page storage operations.
 
         Args:
-            supabase_client: The Supabase client for database operations
+            backend: The database backend for database operations
         """
-        self.supabase_client = supabase_client
+        self.backend = backend or get_database_backend()
 
     async def store_pages(
         self,
@@ -94,8 +95,8 @@ class PageStorageOperations:
                 safe_logfire_info(
                     f"Upserting {len(pages_to_insert)} pages into archon_page_metadata table"
                 )
-                result = (
-                    self.supabase_client.table("archon_page_metadata")
+                result = await (
+                    self.backend.table("archon_page_metadata")
                     .upsert(pages_to_insert, on_conflict="url")
                     .execute()
                 )
@@ -193,8 +194,8 @@ class PageStorageOperations:
                 safe_logfire_info(
                     f"Upserting {len(pages_to_insert)} section pages into archon_page_metadata"
                 )
-                result = (
-                    self.supabase_client.table("archon_page_metadata")
+                result = await (
+                    self.backend.table("archon_page_metadata")
                     .upsert(pages_to_insert, on_conflict="url")
                     .execute()
                 )
@@ -232,7 +233,7 @@ class PageStorageOperations:
             chunk_count: Number of chunks created from this page
         """
         try:
-            self.supabase_client.table("archon_page_metadata").update(
+            await self.backend.table("archon_page_metadata").update(
                 {"chunk_count": chunk_count}
             ).eq("id", page_id).execute()
 

@@ -6,9 +6,10 @@ update_source_info are properly executed in thread pools to avoid blocking
 the async event loop.
 """
 
-import asyncio
 import time
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock, patch
+
+from tests.fake_backend import FakeBackend
 import pytest
 
 from src.server.services.crawling.document_storage_operations import DocumentStorageOperations
@@ -21,8 +22,7 @@ class TestAsyncSourceSummary:
     async def test_extract_summary_runs_in_thread(self):
         """Test that extract_source_summary is executed in a thread pool."""
         # Create mock supabase client
-        mock_supabase = Mock()
-        mock_supabase.table.return_value.upsert.return_value.execute.return_value = Mock()
+        mock_supabase = FakeBackend()
         
         doc_storage = DocumentStorageOperations(mock_supabase)
         
@@ -86,8 +86,7 @@ class TestAsyncSourceSummary:
     @pytest.mark.asyncio
     async def test_extract_summary_error_handling(self):
         """Test that errors in extract_source_summary are handled correctly."""
-        mock_supabase = Mock()
-        mock_supabase.table.return_value.upsert.return_value.execute.return_value = Mock()
+        mock_supabase = FakeBackend()
         
         doc_storage = DocumentStorageOperations(mock_supabase)
         
@@ -135,8 +134,7 @@ class TestAsyncSourceSummary:
     @pytest.mark.asyncio
     async def test_multiple_sources_concurrent_summaries(self):
         """Test that multiple source summaries are generated concurrently."""
-        mock_supabase = Mock()
-        mock_supabase.table.return_value.upsert.return_value.execute.return_value = Mock()
+        mock_supabase = FakeBackend()
         
         doc_storage = DocumentStorageOperations(mock_supabase)
         
@@ -195,8 +193,7 @@ class TestAsyncSourceSummary:
     @pytest.mark.asyncio
     async def test_thread_safety_with_variables(self):
         """Test that variables are properly passed to thread execution."""
-        mock_supabase = Mock()
-        mock_supabase.table.return_value.upsert.return_value.execute.return_value = Mock()
+        mock_supabase = FakeBackend()
         
         doc_storage = DocumentStorageOperations(mock_supabase)
         
@@ -251,8 +248,7 @@ class TestAsyncSourceSummary:
     @pytest.mark.asyncio
     async def test_update_source_info_runs_in_thread(self):
         """Test that update_source_info is executed in a thread pool."""
-        mock_supabase = Mock()
-        mock_supabase.table.return_value.upsert.return_value.execute.return_value = Mock()
+        mock_supabase = FakeBackend()
         
         doc_storage = DocumentStorageOperations(mock_supabase)
         
@@ -305,8 +301,7 @@ class TestAsyncSourceSummary:
     @pytest.mark.asyncio
     async def test_update_source_info_error_handling(self):
         """Test that errors in update_source_info trigger fallback correctly."""
-        mock_supabase = Mock()
-        mock_supabase.table.return_value.upsert.return_value.execute.return_value = Mock()
+        mock_supabase = FakeBackend()
         
         doc_storage = DocumentStorageOperations(mock_supabase)
         
@@ -319,15 +314,7 @@ class TestAsyncSourceSummary:
         )
         
         error_messages = []
-        fallback_called = False
-        
-        def track_fallback_upsert(data):
-            nonlocal fallback_called
-            fallback_called = True
-            return Mock(execute=Mock())
-        
-        mock_supabase.table.return_value.upsert.side_effect = track_fallback_upsert
-        
+
         with patch('src.server.services.crawling.document_storage_operations.extract_source_summary',
                    return_value="Test summary"):
             with patch('src.server.services.crawling.document_storage_operations.update_source_info',
@@ -354,14 +341,15 @@ class TestAsyncSourceSummary:
                         assert any("Failed to create/update source record" in msg for msg in error_messages)
                         assert any("Database connection failed" in msg for msg in error_messages)
                         
-                        # Verify fallback was attempted
-                        assert fallback_called, "Fallback upsert should be called"
+                        # Verify fallback was attempted (the fallback upserts archon_sources)
+                        assert any(
+                            call[0] == "upsert" for call in mock_supabase.calls
+                        ), "Fallback upsert should be called"
 
     @pytest.mark.asyncio
     async def test_update_source_info_preserves_kwargs(self):
         """Test that all kwargs are properly passed to update_source_info in thread."""
-        mock_supabase = Mock()
-        mock_supabase.table.return_value.upsert.return_value.execute.return_value = Mock()
+        mock_supabase = FakeBackend()
         
         doc_storage = DocumentStorageOperations(mock_supabase)
         
@@ -400,7 +388,7 @@ class TestAsyncSourceSummary:
                     )
                     
                     # Verify all kwargs were passed correctly
-                    assert captured_kwargs["client"] == mock_supabase
+                    assert captured_kwargs["backend"] == mock_supabase
                     assert captured_kwargs["source_id"] == "test_kwargs"
                     assert captured_kwargs["summary"] == "Generated summary"
                     assert captured_kwargs["word_count"] == 250

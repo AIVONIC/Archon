@@ -1,6 +1,6 @@
 """Integration tests for llms.txt link following functionality."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from src.server.services.crawling.crawling_service import CrawlingService
 
 
@@ -10,7 +10,7 @@ class TestLlmsTxtLinkFollowing:
     @pytest.fixture
     def service(self):
         """Create a CrawlingService instance for testing."""
-        return CrawlingService(crawler=None, supabase_client=None)
+        return CrawlingService(crawler=None, backend=None)
 
     @pytest.fixture
     def supabase_llms_content(self):

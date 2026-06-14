@@ -8,6 +8,7 @@ Optimized for frequent polling and card displays.
 from typing import Any, Optional
 
 from ...config.logfire_config import safe_logfire_info, safe_logfire_error
+from ..storage import DatabaseBackend, get_database_backend
 
 
 class KnowledgeSummaryService:
@@ -16,14 +17,14 @@ class KnowledgeSummaryService:
     Designed for efficient polling with minimal data transfer.
     """
 
-    def __init__(self, supabase_client):
+    def __init__(self, backend: DatabaseBackend | None = None):
         """
         Initialize the knowledge summary service.
 
         Args:
             supabase_client: The Supabase client for database operations
         """
-        self.supabase = supabase_client
+        self.backend = backend or get_database_backend()
 
     async def get_summaries(
         self,
@@ -53,7 +54,7 @@ class KnowledgeSummaryService:
             safe_logfire_info(f"Fetching knowledge summaries | page={page} | per_page={per_page}")
             
             # Build base query - select only needed fields, including source_url
-            query = self.supabase.from_("archon_sources").select(
+            query = self.backend.table("archon_sources").select(
                 "source_id, title, summary, metadata, source_url, created_at, updated_at"
             )
             
@@ -62,26 +63,18 @@ class KnowledgeSummaryService:
                 query = query.contains("metadata", {"knowledge_type": knowledge_type})
             
             if search:
-                search_pattern = f"%{search}%"
-                query = query.or_(
-                    f"title.ilike.{search_pattern},summary.ilike.{search_pattern}"
-                )
+                query = query.or_ilike(["title", "summary"], search)
             
             # Get total count
-            count_query = self.supabase.from_("archon_sources").select(
-                "*", count="exact", head=True
-            )
+            count_query = self.backend.table("archon_sources").select("*", count="exact")
             
             if knowledge_type:
                 count_query = count_query.contains("metadata", {"knowledge_type": knowledge_type})
             
             if search:
-                search_pattern = f"%{search}%"
-                count_query = count_query.or_(
-                    f"title.ilike.{search_pattern},summary.ilike.{search_pattern}"
-                )
+                count_query = count_query.or_ilike(["title", "summary"], search)
             
-            count_result = count_query.execute()
+            count_result = await count_query.execute()
             total = count_result.count if hasattr(count_result, "count") else 0
             
             # Apply pagination
@@ -90,7 +83,7 @@ class KnowledgeSummaryService:
             query = query.order("updated_at", desc=True)
             
             # Execute main query
-            result = query.execute()
+            result = await query.execute()
             sources = result.data if result.data else []
             
             # Get source IDs for batch operations
@@ -181,9 +174,9 @@ class KnowledgeSummaryService:
             
             # For now, use individual queries but optimize later with raw SQL
             for source_id in source_ids:
-                result = (
-                    self.supabase.from_("archon_crawled_pages")
-                    .select("id", count="exact", head=True)
+                result = await (
+                    self.backend.table("archon_crawled_pages")
+                    .select("id", count="exact")
                     .eq("source_id", source_id)
                     .execute()
                 )
@@ -210,9 +203,9 @@ class KnowledgeSummaryService:
             
             # For now, use individual queries but can optimize with raw SQL later
             for source_id in source_ids:
-                result = (
-                    self.supabase.from_("archon_code_examples")
-                    .select("id", count="exact", head=True)
+                result = await (
+                    self.backend.table("archon_code_examples")
+                    .select("id", count="exact")
                     .eq("source_id", source_id)
                     .execute()
                 )
@@ -236,8 +229,8 @@ class KnowledgeSummaryService:
         """
         try:
             # Get all first URLs in one query
-            result = (
-                self.supabase.from_("archon_crawled_pages")
+            result = await (
+                self.backend.table("archon_crawled_pages")
                 .select("source_id, url")
                 .in_("source_id", source_ids)
                 .order("created_at", desc=False)

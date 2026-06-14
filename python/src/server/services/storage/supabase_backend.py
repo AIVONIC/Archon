@@ -28,8 +28,13 @@ class _SupabaseQueryBuilder:
     def __init__(self, query):
         self._query = query
 
-    def select(self, columns: str = "*", count: str | None = None) -> "_SupabaseQueryBuilder":
-        self._query = self._query.select(columns, count=count) if count else self._query.select(columns)
+    def select(
+        self, columns: str = "*", count: str | None = None, head: bool = False
+    ) -> "_SupabaseQueryBuilder":
+        if count:
+            self._query = self._query.select(columns, count=count, head=head)
+        else:
+            self._query = self._query.select(columns)
         return self
 
     def insert(self, payload) -> "_SupabaseQueryBuilder":
@@ -76,6 +81,10 @@ class _SupabaseQueryBuilder:
         self._query = self._query.contains(column, value)
         return self
 
+    def ilike(self, column: str, pattern: str) -> "_SupabaseQueryBuilder":
+        self._query = self._query.ilike(column, pattern)
+        return self
+
     def or_ilike(self, columns: list[str], term: str) -> "_SupabaseQueryBuilder":
         self._query = self._query.or_(",".join(f"{column}.ilike.%{term}%" for column in columns))
         return self
@@ -90,6 +99,10 @@ class _SupabaseQueryBuilder:
 
     def limit(self, count: int) -> "_SupabaseQueryBuilder":
         self._query = self._query.limit(count)
+        return self
+
+    def range(self, start: int, end: int) -> "_SupabaseQueryBuilder":
+        self._query = self._query.range(start, end)
         return self
 
     def single(self) -> "_SupabaseQueryBuilder":

@@ -55,14 +55,19 @@ class PostgresQueryBuilder:
         self._unarchived = False
         self._order: list[tuple[str, bool]] = []
         self._limit: int | None = None
+        self._offset: int | None = None
         self._single = False
 
     # Terminal operation selectors ------------------------------------------------
 
-    def select(self, columns: str = "*", count: str | None = None) -> "PostgresQueryBuilder":
+    def select(
+        self, columns: str = "*", count: str | None = None, head: bool = False
+    ) -> "PostgresQueryBuilder":
         self._op = "select"
         self._columns = columns
         self._count = count is not None
+        # head is a PostgREST hint to skip the row body; the count path already
+        # returns the count without materializing rows, so nothing extra is needed.
         return self
 
     def insert(self, payload: dict | list) -> "PostgresQueryBuilder":
@@ -111,6 +116,10 @@ class PostgresQueryBuilder:
         self._filters.append(("@>", column, value))
         return self
 
+    def ilike(self, column: str, pattern: str) -> "PostgresQueryBuilder":
+        self._filters.append(("ILIKE", column, pattern))
+        return self
+
     def or_ilike(self, columns: list[str], term: str) -> "PostgresQueryBuilder":
         """Match ``term`` case-insensitively against any of ``columns`` (OR)."""
         self._or_ilike = (list(columns), term)
@@ -129,6 +138,12 @@ class PostgresQueryBuilder:
 
     def limit(self, count: int) -> "PostgresQueryBuilder":
         self._limit = count
+        return self
+
+    def range(self, start: int, end: int) -> "PostgresQueryBuilder":
+        """Inclusive [start, end] row window, matching PostgREST range semantics."""
+        self._offset = start
+        self._limit = end - start + 1
         return self
 
     def single(self) -> "PostgresQueryBuilder":
@@ -201,6 +216,8 @@ class PostgresQueryBuilder:
             clause += " ORDER BY " + ", ".join(parts)
         if self._limit is not None:
             clause += f" LIMIT {int(self._limit)}"
+        if self._offset is not None:
+            clause += f" OFFSET {int(self._offset)}"
         return clause
 
     def _shape(self, rows: list[dict]) -> Any:

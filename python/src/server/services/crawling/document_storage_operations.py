@@ -11,6 +11,7 @@ from typing import Any
 
 from ...config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
 from ..source_management_service import extract_source_summary, update_source_info
+from ..storage import DatabaseBackend, get_database_backend
 from ..storage.document_storage_service import add_documents_to_supabase
 from ..storage.storage_services import DocumentStorageService
 from .code_extraction_service import CodeExtractionService
@@ -23,16 +24,16 @@ class DocumentStorageOperations:
     Handles document storage operations for crawled content.
     """
 
-    def __init__(self, supabase_client):
+    def __init__(self, backend: DatabaseBackend | None = None):
         """
         Initialize document storage operations.
 
         Args:
-            supabase_client: The Supabase client for database operations
+            backend: The database backend for database operations
         """
-        self.supabase_client = supabase_client
-        self.doc_storage_service = DocumentStorageService(supabase_client)
-        self.code_extraction_service = CodeExtractionService(supabase_client)
+        self.backend = backend or get_database_backend()
+        self.doc_storage_service = DocumentStorageService(self.backend)
+        self.code_extraction_service = CodeExtractionService(self.backend)
 
     async def process_and_store_documents(
         self,
@@ -166,7 +167,7 @@ class DocumentStorageOperations:
 
         # Store pages AFTER source is created but BEFORE chunks (FK constraint requirement)
         from .page_storage_operations import PageStorageOperations
-        page_storage_ops = PageStorageOperations(self.supabase_client)
+        page_storage_ops = PageStorageOperations(self.backend)
 
         # Check if this is an llms-full.txt file
         is_llms_full = crawl_type == "llms-txt" or (
@@ -262,7 +263,7 @@ class DocumentStorageOperations:
 
         # Call add_documents_to_supabase with the correct parameters
         storage_stats = await add_documents_to_supabase(
-            client=self.supabase_client,
+            backend=self.backend,
             urls=all_urls,  # Now has entry per chunk
             chunk_numbers=all_chunk_numbers,  # Proper chunk numbers (0, 1, 2, etc)
             contents=all_contents,  # Individual chunks
@@ -359,7 +360,7 @@ class DocumentStorageOperations:
             try:
                 # Call async update_source_info directly
                 await update_source_info(
-                    client=self.supabase_client,
+                    backend=self.backend,
                     source_id=source_id,
                     summary=summary,
                     word_count=source_id_word_counts[source_id],
@@ -400,7 +401,7 @@ class DocumentStorageOperations:
                     if source_display_name:
                         fallback_data["source_display_name"] = source_display_name
 
-                    self.supabase_client.table("archon_sources").upsert(fallback_data).execute()
+                    await self.backend.table("archon_sources").upsert(fallback_data).execute()
                     safe_logfire_info(f"Fallback source creation succeeded for '{source_id}'")
                 except Exception as fallback_error:
                     logger.error(f"Both source creation attempts failed for '{source_id}'", exc_info=True)
@@ -415,8 +416,8 @@ class DocumentStorageOperations:
         if unique_source_ids:
             for source_id in unique_source_ids:
                 try:
-                    source_check = (
-                        self.supabase_client.table("archon_sources")
+                    source_check = await (
+                        self.backend.table("archon_sources")
                         .select("source_id")
                         .eq("source_id", source_id)
                         .execute()

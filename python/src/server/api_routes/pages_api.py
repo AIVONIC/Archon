@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from ..config.logfire_config import get_logger, safe_logfire_error
-from ..utils import get_supabase_client
+from ..services.storage import get_database_backend
 
 # Get logger for this module
 logger = get_logger(__name__)
@@ -105,10 +105,10 @@ async def list_pages(
         PageListResponse with list of pages and metadata
     """
     try:
-        client = get_supabase_client()
+        backend = get_database_backend()
 
         # Build query - select only summary fields (no full_content)
-        query = client.table("archon_page_metadata").select(
+        query = backend.table("archon_page_metadata").select(
             "id, url, section_title, section_order, word_count, char_count, chunk_count"
         ).eq("source_id", source_id)
 
@@ -120,7 +120,7 @@ async def list_pages(
         query = query.order("section_order").order("created_at")
 
         # Execute query
-        result = query.execute()
+        result = await query.execute()
 
         # Use PageSummary (no content handling needed)
         pages = [PageSummary(**page) for page in result.data]
@@ -147,10 +147,10 @@ async def get_page_by_url(url: str = Query(..., description="The URL of the page
         PageResponse with complete page data
     """
     try:
-        client = get_supabase_client()
+        backend = get_database_backend()
 
         # Query by URL
-        result = client.table("archon_page_metadata").select("*").eq("url", url).single().execute()
+        result = await backend.table("archon_page_metadata").select("*").eq("url", url).single().execute()
 
         if not result.data:
             raise HTTPException(status_code=404, detail=f"Page not found for URL: {url}")
@@ -179,10 +179,10 @@ async def get_page_by_id(page_id: str):
         PageResponse with complete page data
     """
     try:
-        client = get_supabase_client()
+        backend = get_database_backend()
 
         # Query by ID
-        result = client.table("archon_page_metadata").select("*").eq("id", page_id).single().execute()
+        result = await backend.table("archon_page_metadata").select("*").eq("id", page_id).single().execute()
 
         if not result.data:
             raise HTTPException(status_code=404, detail=f"Page not found: {page_id}")

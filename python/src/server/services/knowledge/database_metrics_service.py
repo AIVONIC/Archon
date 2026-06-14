@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from ...config.logfire_config import safe_logfire_error, safe_logfire_info
+from ..storage import DatabaseBackend, get_database_backend
 
 
 class DatabaseMetricsService:
@@ -15,14 +16,14 @@ class DatabaseMetricsService:
     Service for retrieving database metrics and statistics.
     """
 
-    def __init__(self, supabase_client):
+    def __init__(self, backend: DatabaseBackend | None = None):
         """
         Initialize the database metrics service.
 
         Args:
-            supabase_client: The Supabase client for database operations
+            backend: The database backend for database operations
         """
-        self.supabase = supabase_client
+        self.backend = backend or get_database_backend()
 
     async def get_metrics(self) -> dict[str, Any]:
         """
@@ -38,21 +39,21 @@ class DatabaseMetricsService:
             metrics = {}
 
             # Sources count
-            sources_result = (
-                self.supabase.table("archon_sources").select("*", count="exact").execute()
+            sources_result = await (
+                self.backend.table("archon_sources").select("*", count="exact").execute()
             )
             metrics["sources_count"] = sources_result.count if sources_result.count else 0
 
             # Crawled pages count
-            pages_result = (
-                self.supabase.table("archon_crawled_pages").select("*", count="exact").execute()
+            pages_result = await (
+                self.backend.table("archon_crawled_pages").select("*", count="exact").execute()
             )
             metrics["pages_count"] = pages_result.count if pages_result.count else 0
 
             # Code examples count
             try:
-                code_examples_result = (
-                    self.supabase.table("archon_code_examples").select("*", count="exact").execute()
+                code_examples_result = await (
+                    self.backend.table("archon_code_examples").select("*", count="exact").execute()
                 )
                 metrics["code_examples_count"] = (
                     code_examples_result.count if code_examples_result.count else 0
@@ -90,21 +91,22 @@ class DatabaseMetricsService:
         try:
             stats = {}
 
-            # Get knowledge type distribution
-            knowledge_types_result = (
-                self.supabase.table("archon_sources").select("metadata->knowledge_type").execute()
+            # Get knowledge type distribution (extract from metadata jsonb in Python
+            # so the query works identically across backends)
+            knowledge_types_result = await (
+                self.backend.table("archon_sources").select("metadata").execute()
             )
 
             if knowledge_types_result.data:
                 type_counts = {}
                 for row in knowledge_types_result.data:
-                    ktype = row.get("knowledge_type", "unknown")
+                    ktype = (row.get("metadata") or {}).get("knowledge_type", "unknown")
                     type_counts[ktype] = type_counts.get(ktype, 0) + 1
                 stats["knowledge_type_distribution"] = type_counts
 
             # Get recent activity
-            recent_sources = (
-                self.supabase.table("archon_sources")
+            recent_sources = await (
+                self.backend.table("archon_sources")
                 .select("source_id, created_at")
                 .order("created_at", desc=True)
                 .limit(5)

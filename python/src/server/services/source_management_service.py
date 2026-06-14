@@ -7,11 +7,9 @@ Consolidates both utility functions and class-based service.
 
 from typing import Any
 
-from supabase import Client
-
 from ..config.logfire_config import get_logger, search_logger
-from .client_manager import get_supabase_client
 from .llm_provider_service import extract_message_text, get_llm_client
+from .storage import DatabaseBackend, get_database_backend
 
 logger = get_logger(__name__)
 
@@ -212,7 +210,7 @@ Generate only the title, nothing else."""
 
 
 async def update_source_info(
-    client: Client,
+    backend: DatabaseBackend,
     source_id: str,
     summary: str,
     word_count: int,
@@ -241,8 +239,8 @@ async def update_source_info(
     search_logger.info(f"Updating source {source_id} with knowledge_type={knowledge_type}")
     try:
         # First, check if source already exists to preserve title
-        existing_source = (
-            client.table("archon_sources").select("title").eq("source_id", source_id).execute()
+        existing_source = await (
+            backend.table("archon_sources").select("title").eq("source_id", source_id).execute()
         )
 
         if existing_source.data:
@@ -288,7 +286,7 @@ async def update_source_info(
             if source_display_name:
                 upsert_data["source_display_name"] = source_display_name
 
-            client.table("archon_sources").upsert(upsert_data).execute()
+            await backend.table("archon_sources").upsert(upsert_data).execute()
 
             search_logger.info(
                 f"Updated source {source_id} while preserving title: {existing_title}"
@@ -351,7 +349,7 @@ async def update_source_info(
             if source_display_name:
                 upsert_data["source_display_name"] = source_display_name
 
-            client.table("archon_sources").upsert(upsert_data).execute()
+            await backend.table("archon_sources").upsert(upsert_data).execute()
             search_logger.info(f"Created/updated source {source_id} with title: {title}")
 
     except Exception as e:
@@ -362,11 +360,11 @@ async def update_source_info(
 class SourceManagementService:
     """Service class for source management operations"""
 
-    def __init__(self, supabase_client=None):
-        """Initialize with optional supabase client"""
-        self.supabase_client = supabase_client or get_supabase_client()
+    def __init__(self, backend: DatabaseBackend | None = None):
+        """Initialize with optional database backend"""
+        self.backend = backend or get_database_backend()
 
-    def get_available_sources(self) -> tuple[bool, dict[str, Any]]:
+    async def get_available_sources(self) -> tuple[bool, dict[str, Any]]:
         """
         Get all available sources from the sources table.
 
@@ -376,7 +374,7 @@ class SourceManagementService:
             Tuple of (success, result_dict)
         """
         try:
-            response = self.supabase_client.table("archon_sources").select("*").execute()
+            response = await self.backend.table("archon_sources").select("*").execute()
 
             sources = []
             for row in response.data:
@@ -394,7 +392,7 @@ class SourceManagementService:
             logger.error(f"Error retrieving sources: {e}")
             return False, {"error": f"Error retrieving sources: {str(e)}"}
 
-    def delete_source(self, source_id: str) -> tuple[bool, dict[str, Any]]:
+    async def delete_source(self, source_id: str) -> tuple[bool, dict[str, Any]]:
         """
         Delete a source from the database.
 
@@ -414,8 +412,8 @@ class SourceManagementService:
             # The database will automatically handle deleting related records
             logger.info(f"Deleting source {source_id} (CASCADE will handle related records)")
 
-            source_response = (
-                self.supabase_client.table("archon_sources")
+            source_response = await (
+                self.backend.table("archon_sources")
                 .delete()
                 .eq("source_id", source_id)
                 .execute()
@@ -437,7 +435,7 @@ class SourceManagementService:
             logger.error(f"Error deleting source {source_id}: {e}")
             return False, {"error": f"Error deleting source: {str(e)}"}
 
-    def update_source_metadata(
+    async def update_source_metadata(
         self,
         source_id: str,
         title: str = None,
@@ -473,8 +471,8 @@ class SourceManagementService:
             # Handle metadata fields
             if knowledge_type is not None or tags is not None:
                 # Get existing metadata
-                existing = (
-                    self.supabase_client.table("archon_sources")
+                existing = await (
+                    self.backend.table("archon_sources")
                     .select("metadata")
                     .eq("source_id", source_id)
                     .execute()
@@ -492,8 +490,8 @@ class SourceManagementService:
                 return False, {"error": "No update data provided"}
 
             # Update the source
-            response = (
-                self.supabase_client.table("archon_sources")
+            response = await (
+                self.backend.table("archon_sources")
                 .update(update_data)
                 .eq("source_id", source_id)
                 .execute()
@@ -540,7 +538,7 @@ class SourceManagementService:
 
             # Create the source info using the utility function
             await update_source_info(
-                self.supabase_client,
+                self.backend,
                 source_id,
                 source_summary,
                 word_count,
@@ -562,7 +560,7 @@ class SourceManagementService:
             logger.error(f"Error creating source info: {e}")
             return False, {"error": f"Error creating source info: {str(e)}"}
 
-    def get_source_details(self, source_id: str) -> tuple[bool, dict[str, Any]]:
+    async def get_source_details(self, source_id: str) -> tuple[bool, dict[str, Any]]:
         """
         Get detailed information about a specific source.
 
@@ -574,8 +572,8 @@ class SourceManagementService:
         """
         try:
             # Get source metadata
-            source_response = (
-                self.supabase_client.table("archon_sources")
+            source_response = await (
+                self.backend.table("archon_sources")
                 .select("*")
                 .eq("source_id", source_id)
                 .execute()
@@ -587,8 +585,8 @@ class SourceManagementService:
             source_data = source_response.data[0]
 
             # Get page count
-            pages_response = (
-                self.supabase_client.table("archon_crawled_pages")
+            pages_response = await (
+                self.backend.table("archon_crawled_pages")
                 .select("id")
                 .eq("source_id", source_id)
                 .execute()
@@ -596,8 +594,8 @@ class SourceManagementService:
             page_count = len(pages_response.data) if pages_response.data else 0
 
             # Get code example count
-            code_response = (
-                self.supabase_client.table("archon_code_examples")
+            code_response = await (
+                self.backend.table("archon_code_examples")
                 .select("id")
                 .eq("source_id", source_id)
                 .execute()
@@ -614,7 +612,7 @@ class SourceManagementService:
             logger.error(f"Error getting source details: {e}")
             return False, {"error": f"Error getting source details: {str(e)}"}
 
-    def list_sources_by_type(self, knowledge_type: str = None) -> tuple[bool, dict[str, Any]]:
+    async def list_sources_by_type(self, knowledge_type: str = None) -> tuple[bool, dict[str, Any]]:
         """
         List sources filtered by knowledge type.
 
@@ -625,13 +623,13 @@ class SourceManagementService:
             Tuple of (success, result_dict)
         """
         try:
-            query = self.supabase_client.table("archon_sources").select("*")
+            query = self.backend.table("archon_sources").select("*")
 
             if knowledge_type:
                 # Filter by metadata->knowledge_type
                 query = query.contains("metadata", {"knowledge_type": knowledge_type})
 
-            response = query.execute()
+            response = await query.execute()
 
             sources = []
             for row in response.data:

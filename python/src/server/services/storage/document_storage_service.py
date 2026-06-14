@@ -9,12 +9,13 @@ import os
 from typing import Any
 
 from ...config.logfire_config import safe_span, search_logger
+from ..credential_service import credential_service
 from ..embeddings.contextual_embedding_service import generate_contextual_embeddings_batch
 from ..embeddings.embedding_service import create_embeddings_batch
 
 
 async def add_documents_to_supabase(
-    client,
+    backend,
     urls: list[str],
     chunk_numbers: list[int],
     contents: list[str],
@@ -59,9 +60,7 @@ async def add_documents_to_supabase(
 
         # Load settings from database
         try:
-            # Defensive import to handle any initialization issues
-            from ..credential_service import credential_service as cred_service
-            rag_settings = await cred_service.get_credentials_by_category("rag_strategy")
+            rag_settings = await credential_service.get_credentials_by_category("rag_strategy")
             if batch_size is None:
                 batch_size = int(rag_settings.get("DOCUMENT_STORAGE_BATCH_SIZE", "50"))
             # Clamp batch sizes to sane minimums to prevent crashes
@@ -101,7 +100,7 @@ async def add_documents_to_supabase(
                             raise
 
                     batch_urls = unique_urls[i : i + delete_batch_size]
-                    client.table("archon_crawled_pages").delete().in_("url", batch_urls).execute()
+                    await backend.table("archon_crawled_pages").delete().in_("url", batch_urls).execute()
                     # Yield control to allow other async operations
                     if i + delete_batch_size < len(unique_urls):
                         await asyncio.sleep(0.05)  # Reduced pause between delete batches
@@ -131,7 +130,7 @@ async def add_documents_to_supabase(
 
                 batch_urls = unique_urls[i : i + fallback_batch_size]
                 try:
-                    client.table("archon_crawled_pages").delete().in_("url", batch_urls).execute()
+                    await backend.table("archon_crawled_pages").delete().in_("url", batch_urls).execute()
                     await asyncio.sleep(0.05)  # Rate limit to prevent overwhelming
                 except Exception as inner_e:
                     search_logger.error(
@@ -331,8 +330,7 @@ async def add_documents_to_supabase(
             
             # Get model information for tracking
             from ..llm_provider_service import get_embedding_model
-            from ..credential_service import credential_service
-            
+
             # Get embedding model name
             embedding_model_name = await get_embedding_model(provider=provider)
             
@@ -441,7 +439,7 @@ async def add_documents_to_supabase(
                         raise
 
                 try:
-                    client.table("archon_crawled_pages").insert(batch_data).execute()
+                    await backend.table("archon_crawled_pages").insert(batch_data).execute()
                     total_chunks_stored += len(batch_data)
 
                     # Increment completed batches and report simple progress
@@ -499,7 +497,7 @@ async def add_documents_to_supabase(
                                     raise
 
                             try:
-                                client.table("archon_crawled_pages").insert(record).execute()
+                                await backend.table("archon_crawled_pages").insert(record).execute()
                                 successful_inserts += 1
                                 total_chunks_stored += 1
                             except Exception as individual_error:

@@ -3,11 +3,12 @@ Fixed unit tests for migration_service.py
 """
 
 import hashlib
-from datetime import datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+
+from tests.fake_backend import FakeBackend
 
 from src.server.config.version import ARCHON_VERSION
 from src.server.services.migration_service import (
@@ -90,10 +91,9 @@ def test_migration_service_init_docker():
 
 
 @pytest.mark.asyncio
-async def test_get_applied_migrations_success(migration_service, mock_supabase_client):
+async def test_get_applied_migrations_success(migration_service):
     """Test successful retrieval of applied migrations."""
-    mock_response = MagicMock()
-    mock_response.data = [
+    rows = [
         {
             "id": "123",
             "version": "0.1.0",
@@ -103,9 +103,7 @@ async def test_get_applied_migrations_success(migration_service, mock_supabase_c
         },
     ]
 
-    mock_supabase_client.table.return_value.select.return_value.order.return_value.execute.return_value = mock_response
-
-    with patch.object(migration_service, '_get_supabase_client', return_value=mock_supabase_client):
+    with patch.object(migration_service, '_get_backend', return_value=FakeBackend(data=rows)):
         with patch.object(migration_service, 'check_migrations_table_exists', return_value=True):
             result = await migration_service.get_applied_migrations()
 
@@ -116,9 +114,9 @@ async def test_get_applied_migrations_success(migration_service, mock_supabase_c
 
 
 @pytest.mark.asyncio
-async def test_get_applied_migrations_table_not_exists(migration_service, mock_supabase_client):
+async def test_get_applied_migrations_table_not_exists(migration_service):
     """Test handling when migrations table doesn't exist."""
-    with patch.object(migration_service, '_get_supabase_client', return_value=mock_supabase_client):
+    with patch.object(migration_service, '_get_backend', return_value=FakeBackend()):
         with patch.object(migration_service, 'check_migrations_table_exists', return_value=False):
             result = await migration_service.get_applied_migrations()
             assert result == []

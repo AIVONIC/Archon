@@ -119,7 +119,7 @@ class DocumentStorageService(BaseStorageService):
 
                 logger.info(f"Updating source info for {source_id} with knowledge_type={knowledge_type}")
                 await update_source_info(
-                    self.supabase_client,
+                    self.backend,
                     source_id,
                     source_summary,
                     total_word_count,
@@ -135,7 +135,7 @@ class DocumentStorageService(BaseStorageService):
 
                 # Store documents
                 await add_documents_to_supabase(
-                    client=self.supabase_client,
+                    backend=self.backend,
                     urls=urls,
                     chunk_numbers=chunk_numbers,
                     contents=contents,
@@ -159,7 +159,7 @@ class DocumentStorageService(BaseStorageService):
                         # Import code extraction service
                         from ..crawling.code_extraction_service import CodeExtractionService
                         
-                        code_service = CodeExtractionService(self.supabase_client)
+                        code_service = CodeExtractionService(self.backend)
                         
                         # Create crawl_results format expected by code extraction service
                         # markdown: cleaned plaintext (HTML->markdown for HTML files, raw content otherwise)
@@ -186,7 +186,7 @@ class DocumentStorageService(BaseStorageService):
                                 message = data.get("log", "Extracting code examples...")
                                 await progress_callback(message, int(mapped_progress))
                         
-                        logger.info(f"🔍 DEBUG: About to call extract_and_store_code_examples...")
+                        logger.info("🔍 DEBUG: About to call extract_and_store_code_examples...")
                         code_examples_count = await code_service.extract_and_store_code_examples(
                             crawl_results=crawl_results,
                             url_to_full_document=url_to_full_document,

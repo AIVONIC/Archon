@@ -147,9 +147,11 @@ class DocumentAgent(BaseAgent[DocumentDependencies, DocumentOperation]):
                 if not ctx.deps.project_id:
                     return "No project is currently selected. Please specify a project or create one first to manage documents."
 
-                supabase = get_supabase_client()
-                response = (
-                    supabase.table("archon_projects")
+                from ..services.storage import get_database_backend
+
+                backend = get_database_backend()
+                response = await (
+                    backend.table("archon_projects")
                     .select("docs")
                     .eq("id", ctx.deps.project_id)
                     .execute()
@@ -178,9 +180,11 @@ class DocumentAgent(BaseAgent[DocumentDependencies, DocumentOperation]):
         async def get_document(ctx: RunContext[DocumentDependencies], document_title: str) -> str:
             """Get the content of a specific document by title."""
             try:
-                supabase = get_supabase_client()
-                response = (
-                    supabase.table("archon_projects")
+                from ..services.storage import get_database_backend
+
+                backend = get_database_backend()
+                response = await (
+                    backend.table("archon_projects")
                     .select("docs")
                     .eq("id", ctx.deps.project_id)
                     .execute()

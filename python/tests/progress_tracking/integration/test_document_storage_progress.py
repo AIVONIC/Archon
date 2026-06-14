@@ -1,13 +1,13 @@
 """Integration tests for document storage progress tracking."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.server.services.storage.document_storage_service import add_documents_to_supabase
 from src.server.services.embeddings.embedding_service import EmbeddingBatchResult
 from src.server.utils.progress.progress_tracker import ProgressTracker
-from tests.progress_tracking.utils.test_helpers import ProgressTestHelper
+from tests.fake_backend import FakeBackend
 
 
 def create_mock_embedding_result(embedding_count: int) -> EmbeddingBatchResult:
@@ -21,16 +21,7 @@ def create_mock_embedding_result(embedding_count: int) -> EmbeddingBatchResult:
 @pytest.fixture
 def progress_mock_supabase_client():
     """Create a mock Supabase client for progress tracking tests."""
-    client = MagicMock()
-    
-    # Mock table operations
-    mock_table = MagicMock()
-    mock_table.delete.return_value = mock_table
-    mock_table.in_.return_value = mock_table
-    mock_table.execute.return_value = MagicMock()
-    
-    client.table.return_value = mock_table
-    return client
+    return FakeBackend()
 
 
 @pytest.fixture
@@ -83,7 +74,7 @@ class TestDocumentStorageProgressIntegration:
     @patch('src.server.services.storage.document_storage_service.create_embeddings_batch')
     @patch('src.server.services.credential_service.credential_service')
     async def test_batch_progress_reporting(self, mock_credentials, mock_create_embeddings, 
-                                          mock_supabase_client, sample_document_data, 
+                                          progress_mock_supabase_client, sample_document_data, 
                                           mock_progress_callback):
         """Test that batch progress is reported correctly during document storage."""
         
@@ -97,8 +88,8 @@ class TestDocumentStorageProgressIntegration:
         mock_create_embeddings.return_value = create_mock_embedding_result(3)
         
         # Call the function
-        result = await add_documents_to_supabase(
-            client=mock_supabase_client,
+        await add_documents_to_supabase(
+            backend=progress_mock_supabase_client,
             urls=sample_document_data["urls"],
             chunk_numbers=sample_document_data["chunk_numbers"],
             contents=sample_document_data["contents"],
@@ -130,7 +121,7 @@ class TestDocumentStorageProgressIntegration:
     @patch('src.server.services.storage.document_storage_service.create_embeddings_batch')
     @patch('src.server.services.credential_service.credential_service')
     async def test_progress_callback_signature(self, mock_credentials, mock_create_embeddings,
-                                             mock_supabase_client, sample_document_data):
+                                             progress_mock_supabase_client, sample_document_data):
         """Test that progress callback is called with correct signature."""
         
         # Setup
@@ -154,7 +145,7 @@ class TestDocumentStorageProgressIntegration:
         
         # Call function
         await add_documents_to_supabase(
-            client=mock_supabase_client,
+            backend=progress_mock_supabase_client,
             urls=sample_document_data["urls"],
             chunk_numbers=sample_document_data["chunk_numbers"], 
             contents=sample_document_data["contents"],
@@ -183,7 +174,7 @@ class TestDocumentStorageProgressIntegration:
     @patch('src.server.services.storage.document_storage_service.create_embeddings_batch')
     @patch('src.server.services.credential_service.credential_service')
     async def test_cancellation_support(self, mock_credentials, mock_create_embeddings,
-                                       mock_supabase_client, sample_document_data):
+                                       progress_mock_supabase_client, sample_document_data):
         """Test that cancellation is handled correctly during document storage."""
         
         mock_credentials.get_credentials_by_category.return_value = {
@@ -204,7 +195,7 @@ class TestDocumentStorageProgressIntegration:
         # Should raise CancelledError
         with pytest.raises(asyncio.CancelledError):
             await add_documents_to_supabase(
-                client=mock_supabase_client,
+                backend=progress_mock_supabase_client,
                 urls=sample_document_data["urls"],
                 chunk_numbers=sample_document_data["chunk_numbers"],
                 contents=sample_document_data["contents"], 
@@ -217,7 +208,7 @@ class TestDocumentStorageProgressIntegration:
     @patch('src.server.services.storage.document_storage_service.create_embeddings_batch')
     @patch('src.server.services.credential_service.credential_service')
     async def test_error_handling_in_progress_reporting(self, mock_credentials, mock_create_embeddings,
-                                                      mock_supabase_client, sample_document_data):
+                                                      progress_mock_supabase_client, sample_document_data):
         """Test that errors in progress reporting don't crash the storage process."""
         
         mock_credentials.get_credentials_by_category.return_value = {
@@ -232,9 +223,9 @@ class TestDocumentStorageProgressIntegration:
             if progress > 0:  # Fail on progress updates but not initial call
                 raise Exception("Progress callback failed")
         
-        # Should not raise exception - storage should continue despite callback failure  
+        # Should not raise exception - storage should continue despite callback failure
         result = await add_documents_to_supabase(
-            client=mock_supabase_client,
+            backend=progress_mock_supabase_client,
             urls=sample_document_data["urls"][:3],  # Limit to 3 for simplicity
             chunk_numbers=sample_document_data["chunk_numbers"][:3],
             contents=sample_document_data["contents"][:3],

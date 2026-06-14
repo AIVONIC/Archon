@@ -7,7 +7,6 @@ Credentials include API keys, service credentials, and application configuration
 
 import base64
 import os
-import re
 import time
 from dataclasses import dataclass
 
@@ -17,7 +16,6 @@ from typing import Any
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from supabase import Client, create_client
 
 from ..config.logfire_config import get_logger
 
@@ -42,44 +40,20 @@ class CredentialService:
     """Service for managing application credentials and configuration."""
 
     def __init__(self):
-        self._supabase: Client | None = None
+        self._backend = None
         self._cache: dict[str, Any] = {}
         self._cache_initialized = False
         self._rag_settings_cache: dict[str, Any] | None = None
         self._rag_cache_timestamp: float | None = None
         self._rag_cache_ttl = 300  # 5 minutes TTL for RAG settings cache
 
-    def _get_supabase_client(self) -> Client:
-        """
-        Get or create a properly configured Supabase client using environment variables.
-        Uses the standard Supabase client initialization.
-        """
-        if self._supabase is None:
-            url = os.getenv("SUPABASE_URL")
-            key = os.getenv("SUPABASE_SERVICE_KEY")
+    def _get_backend(self):
+        """Get or create the database backend (deferred import avoids a cycle)."""
+        if self._backend is None:
+            from .storage import get_database_backend
 
-            if not url or not key:
-                raise ValueError(
-                    "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in environment variables"
-                )
-
-            try:
-                # Initialize with standard Supabase client - no need for custom headers
-                self._supabase = create_client(url, key)
-
-                # Extract project ID from URL for logging purposes only
-                match = re.match(r"https://([^.]+)\.supabase\.co", url)
-                if match:
-                    project_id = match.group(1)
-                    logger.debug(f"Supabase client initialized for project: {project_id}")
-                else:
-                    logger.debug("Supabase client initialized successfully")
-
-            except Exception as e:
-                logger.error(f"Error initializing Supabase client: {e}")
-                raise
-
-        return self._supabase
+            self._backend = get_database_backend()
+        return self._backend
 
     def _get_encryption_key(self) -> bytes:
         """Generate encryption key from environment variables."""
@@ -126,10 +100,10 @@ class CredentialService:
     async def load_all_credentials(self) -> dict[str, Any]:
         """Load all credentials from database and cache them."""
         try:
-            supabase = self._get_supabase_client()
+            backend = self._get_backend()
 
             # Fetch all credentials
-            result = supabase.table("archon_settings").select("*").execute()
+            result = await backend.table("archon_settings").select("*").execute()
 
             credentials = {}
             for item in result.data:
@@ -197,7 +171,7 @@ class CredentialService:
     ) -> bool:
         """Set a credential value."""
         try:
-            supabase = self._get_supabase_client()
+            backend = self._get_backend()
 
             if is_encrypted:
                 encrypted_value = self._encrypt_value(value)
@@ -230,7 +204,7 @@ class CredentialService:
 
             # Upsert to database with proper conflict handling
             # Since we validate service key at startup, permission errors here indicate actual database issues
-            supabase.table("archon_settings").upsert(
+            await backend.table("archon_settings").upsert(
                 data,
                 on_conflict="key",  # Specify the unique column for conflict resolution
             ).execute()
@@ -275,10 +249,10 @@ class CredentialService:
     async def delete_credential(self, key: str) -> bool:
         """Delete a credential."""
         try:
-            supabase = self._get_supabase_client()
+            backend = self._get_backend()
 
             # Since we validate service key at startup, we can directly execute
-            supabase.table("archon_settings").delete().eq("key", key).execute()
+            await backend.table("archon_settings").delete().eq("key", key).execute()
 
             # Remove from cache
             if key in self._cache:
@@ -339,9 +313,9 @@ class CredentialService:
                 return self._rag_settings_cache
 
         try:
-            supabase = self._get_supabase_client()
-            result = (
-                supabase.table("archon_settings").select("*").eq("category", category).execute()
+            backend = self._get_backend()
+            result = await (
+                backend.table("archon_settings").select("*").eq("category", category).execute()
             )
 
             credentials = {}
@@ -371,8 +345,8 @@ class CredentialService:
     async def list_all_credentials(self) -> list[CredentialItem]:
         """Get all credentials as a list of CredentialItem objects (for Settings UI)."""
         try:
-            supabase = self._get_supabase_client()
-            result = supabase.table("archon_settings").select("*").execute()
+            backend = self._get_backend()
+            result = await backend.table("archon_settings").select("*").execute()
 
             credentials = []
             for item in result.data:
@@ -456,7 +430,7 @@ class CredentialService:
                     if explicit_embedding_provider and explicit_embedding_provider not in embedding_capable_providers:
                         logger.warning(f"Invalid embedding provider '{explicit_embedding_provider}' doesn't support embeddings, defaulting to OpenAI")
                     provider = "openai"
-                    logger.debug(f"No explicit embedding provider set, defaulting to OpenAI for backward compatibility")
+                    logger.debug("No explicit embedding provider set, defaulting to OpenAI for backward compatibility")
             else:
                 provider = rag_settings.get("LLM_PROVIDER", "openai")
                 # Ensure provider is a valid string, not a boolean or other type

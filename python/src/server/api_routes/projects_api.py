@@ -299,6 +299,12 @@ async def get_all_task_counts(
             logfire.error(f"Failed to get task counts | error={result.get('error')}")
             raise HTTPException(status_code=500, detail=result)
 
+        # The frontend surfaces "review" tasks under "doing"; fold the review
+        # count into doing so the response matches that grouping.
+        for counts in result.values():
+            if isinstance(counts, dict) and "review" in counts:
+                counts["doing"] = counts.get("doing", 0) + counts.pop("review")
+
         # Generate ETag from counts data
         etag_data = {
             "counts": result,
