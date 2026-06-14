@@ -37,11 +37,11 @@ class TestProjectsListPolling:
             
             mock_proj_service = MagicMock()
             mock_proj_class.return_value = mock_proj_service
-            mock_proj_service.list_projects.return_value = (True, {"projects": mock_projects})
+            mock_proj_service.list_projects = AsyncMock(return_value=(True, {"projects": mock_projects}))
             
             mock_source_service = MagicMock()
             mock_source_class.return_value = mock_source_service
-            mock_source_service.format_projects_with_sources.return_value = mock_projects
+            mock_source_service.format_projects_with_sources = AsyncMock(return_value=mock_projects)
             
             response = Response()
             result = await list_projects(response=response, if_none_match=None)
@@ -72,11 +72,11 @@ class TestProjectsListPolling:
             
             mock_proj_service = MagicMock()
             mock_proj_class.return_value = mock_proj_service
-            mock_proj_service.list_projects.return_value = (True, {"projects": mock_projects})
+            mock_proj_service.list_projects = AsyncMock(return_value=(True, {"projects": mock_projects}))
             
             mock_source_service = MagicMock()
             mock_source_class.return_value = mock_source_service
-            mock_source_service.format_projects_with_sources.return_value = mock_projects
+            mock_source_service.format_projects_with_sources = AsyncMock(return_value=mock_projects)
             
             # First request to get ETag
             response1 = Response()
@@ -107,8 +107,8 @@ class TestProjectsListPolling:
             
             # Initial data
             projects1 = [{"id": "proj-1", "name": "Project 1"}]
-            mock_proj_service.list_projects.return_value = (True, {"projects": projects1})
-            mock_source_service.format_projects_with_sources.return_value = projects1
+            mock_proj_service.list_projects = AsyncMock(return_value=(True, {"projects": projects1}))
+            mock_source_service.format_projects_with_sources = AsyncMock(return_value=projects1)
             
             response1 = Response()
             await list_projects(response=response1, if_none_match=None)
@@ -116,8 +116,8 @@ class TestProjectsListPolling:
             
             # Modified data
             projects2 = [{"id": "proj-1", "name": "Project 1 Updated"}]
-            mock_proj_service.list_projects.return_value = (True, {"projects": projects2})
-            mock_source_service.format_projects_with_sources.return_value = projects2
+            mock_proj_service.list_projects = AsyncMock(return_value=(True, {"projects": projects2}))
+            mock_source_service.format_projects_with_sources = AsyncMock(return_value=projects2)
             
             response2 = Response()
             await list_projects(response=response2, if_none_match=etag1)
@@ -134,11 +134,11 @@ class TestProjectsListPolling:
             mock_proj_service = MagicMock()
             mock_proj_class.return_value = mock_proj_service
             projects = [{"id": "proj-1", "name": "Test Project"}]
-            mock_proj_service.list_projects.return_value = (True, {"projects": projects})
+            mock_proj_service.list_projects = AsyncMock(return_value=(True, {"projects": projects}))
             
             mock_source_service = MagicMock()
             mock_source_class.return_value = mock_source_service
-            mock_source_service.format_projects_with_sources.return_value = projects
+            mock_source_service.format_projects_with_sources = AsyncMock(return_value=projects)
             
             # First request
             response1 = test_client.get("/api/projects")
@@ -174,11 +174,11 @@ class TestProjectTasksPolling:
             
             mock_proj_service = MagicMock()
             mock_proj_class.return_value = mock_proj_service
-            mock_proj_service.get_project.return_value = (True, {"id": "proj-1", "name": "Test"})
+            mock_proj_service.get_project = AsyncMock(return_value=(True, {"id": "proj-1", "name": "Test"}))
             
             mock_task_service = MagicMock()
             mock_task_class.return_value = mock_task_service
-            mock_task_service.list_tasks.return_value = (True, {"tasks": mock_tasks})
+            mock_task_service.list_tasks = AsyncMock(return_value=(True, {"tasks": mock_tasks}))
             
             # Create mock request object
             mock_request = MagicMock(spec=Request)
@@ -209,11 +209,11 @@ class TestProjectTasksPolling:
             
             mock_proj_service = MagicMock()
             mock_proj_class.return_value = mock_proj_service
-            mock_proj_service.get_project.return_value = (True, {"id": "proj-1"})
+            mock_proj_service.get_project = AsyncMock(return_value=(True, {"id": "proj-1"}))
             
             mock_task_service = MagicMock()
             mock_task_class.return_value = mock_task_service
-            mock_task_service.list_tasks.return_value = (True, {"tasks": mock_tasks})
+            mock_task_service.list_tasks = AsyncMock(return_value=(True, {"tasks": mock_tasks}))
             
             # First request
             mock_request1 = MagicMock(spec=Request)
@@ -241,13 +241,13 @@ class TestProjectTasksPolling:
             
             mock_proj_service = MagicMock()
             mock_proj_class.return_value = mock_proj_service
-            mock_proj_service.get_project.return_value = (True, {"id": "proj-1"})
+            mock_proj_service.get_project = AsyncMock(return_value=(True, {"id": "proj-1"}))
             
             mock_task_service = MagicMock()
             mock_task_class.return_value = mock_task_service
-            mock_task_service.list_tasks.return_value = (True, {"tasks": [
+            mock_task_service.list_tasks = AsyncMock(return_value=(True, {"tasks": [
                 {"id": "task-1", "title": "Test Task", "status": "todo"},
-            ]})
+            ]}))
             
             # Simulate multiple polling requests
             etag = None
@@ -279,11 +279,11 @@ class TestPollingEdgeCases:
             
             mock_proj_service = MagicMock()
             mock_proj_class.return_value = mock_proj_service
-            mock_proj_service.list_projects.return_value = (True, {"projects": []})
+            mock_proj_service.list_projects = AsyncMock(return_value=(True, {"projects": []}))
             
             mock_source_service = MagicMock()
             mock_source_class.return_value = mock_source_service
-            mock_source_service.format_projects_with_sources.return_value = []
+            mock_source_service.format_projects_with_sources = AsyncMock(return_value=[])
             
             response = Response()
             result = await list_projects(response=response)
@@ -308,13 +308,13 @@ class TestPollingEdgeCases:
             
             mock_proj_service = MagicMock()
             mock_proj_class.return_value = mock_proj_service
-            mock_proj_service.get_project.return_value = (False, "Project not found")
+            mock_proj_service.get_project = AsyncMock(return_value=(False, "Project not found"))
             
             # TaskService will be called and should return error for project not found
             mock_task_service = MagicMock()
             mock_task_class.return_value = mock_task_service
             # When project doesn't exist, list_tasks should fail
-            mock_task_service.list_tasks.return_value = (False, {"error": "Project not found", "status_code": 404})
+            mock_task_service.list_tasks = AsyncMock(return_value=(False, {"error": "Project not found", "status_code": 404}))
             
             mock_request = MagicMock(spec=Request)
             mock_request.headers = {}

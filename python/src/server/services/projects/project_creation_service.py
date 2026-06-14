@@ -9,9 +9,8 @@ AI-assisted documentation generation and progress tracking.
 from datetime import UTC, datetime
 from typing import Any
 
-from src.server.utils import get_supabase_client
-
 from ...config.logfire_config import get_logger
+from ..storage import DatabaseBackend, get_database_backend
 
 logger = get_logger(__name__)
 
@@ -19,9 +18,9 @@ logger = get_logger(__name__)
 class ProjectCreationService:
     """Service class for advanced project creation with AI assistance"""
 
-    def __init__(self, supabase_client=None):
-        """Initialize with optional supabase client"""
-        self.supabase_client = supabase_client or get_supabase_client()
+    def __init__(self, backend: DatabaseBackend | None = None):
+        """Initialize with optional database backend"""
+        self.backend = backend or get_database_backend()
 
     async def create_project_with_ai(
         self,
@@ -68,9 +67,9 @@ class ProjectCreationService:
                     project_data[key] = kwargs[key]
 
             # Create the project in database
-            response = self.supabase_client.table("archon_projects").insert(project_data).execute()
+            response = await self.backend.table("archon_projects").insert(project_data).execute()
             if hasattr(response, "error") and response.error:
-                raise RuntimeError(f"Supabase insert failed for project '{title}': {response.error}")
+                raise RuntimeError(f"Insert failed for project '{title}': {response.error}")
             if not response.data:
                 raise RuntimeError(f"Insert returned no data for project '{title}'")
 
@@ -85,8 +84,8 @@ class ProjectCreationService:
             )
 
             # Final success - fetch complete project data
-            final_project_response = (
-                self.supabase_client.table("archon_projects")
+            final_project_response = await (
+                self.backend.table("archon_projects")
                 .select("*")
                 .eq("id", project_id)
                 .execute()

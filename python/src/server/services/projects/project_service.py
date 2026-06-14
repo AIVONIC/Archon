@@ -10,9 +10,8 @@ separating business logic from transport-specific code.
 from datetime import datetime
 from typing import Any
 
-from src.server.utils import get_supabase_client
-
 from ...config.logfire_config import get_logger
+from ..storage import DatabaseBackend, get_database_backend
 
 logger = get_logger(__name__)
 
@@ -20,11 +19,13 @@ logger = get_logger(__name__)
 class ProjectService:
     """Service class for project operations"""
 
-    def __init__(self, supabase_client=None):
-        """Initialize with optional supabase client"""
-        self.supabase_client = supabase_client or get_supabase_client()
+    def __init__(self, backend: DatabaseBackend | None = None):
+        """Initialize with optional database backend"""
+        self.backend = backend or get_database_backend()
 
-    def create_project(self, title: str, github_repo: str = None) -> tuple[bool, dict[str, Any]]:
+    async def create_project(
+        self, title: str, github_repo: str = None
+    ) -> tuple[bool, dict[str, Any]]:
         """
         Create a new project with optional PRD and GitHub repo.
 
@@ -50,7 +51,7 @@ class ProjectService:
                 project_data["github_repo"] = github_repo.strip()
 
             # Insert project
-            response = self.supabase_client.table("archon_projects").insert(project_data).execute()
+            response = await self.backend.table("archon_projects").insert(project_data).execute()
 
             if not response.data:
                 logger.error("Supabase returned empty data for project creation")
@@ -73,7 +74,7 @@ class ProjectService:
             logger.error(f"Error creating project: {e}")
             return False, {"error": f"Database error: {str(e)}"}
 
-    def list_projects(self, include_content: bool = True) -> tuple[bool, dict[str, Any]]:
+    async def list_projects(self, include_content: bool = True) -> tuple[bool, dict[str, Any]]:
         """
         List all projects.
 
@@ -87,8 +88,8 @@ class ProjectService:
         try:
             if include_content:
                 # Current behavior - maintain backward compatibility
-                response = (
-                    self.supabase_client.table("archon_projects")
+                response = await (
+                    self.backend.table("archon_projects")
                     .select("*")
                     .order("created_at", desc=True)
                     .execute()
@@ -111,8 +112,8 @@ class ProjectService:
             else:
                 # Lightweight response for MCP - fetch all data but only return metadata + stats
                 # FIXED: N+1 query problem - now using single query
-                response = (
-                    self.supabase_client.table("archon_projects")
+                response = await (
+                    self.backend.table("archon_projects")
                     .select("*")  # Fetch all fields in single query
                     .order("created_at", desc=True)
                     .execute()
@@ -147,7 +148,7 @@ class ProjectService:
             logger.error(f"Error listing projects: {e}")
             return False, {"error": f"Error listing projects: {str(e)}"}
 
-    def get_project(self, project_id: str) -> tuple[bool, dict[str, Any]]:
+    async def get_project(self, project_id: str) -> tuple[bool, dict[str, Any]]:
         """
         Get a specific project by ID.
 
@@ -155,8 +156,8 @@ class ProjectService:
             Tuple of (success, result_dict)
         """
         try:
-            response = (
-                self.supabase_client.table("archon_projects")
+            response = await (
+                self.backend.table("archon_projects")
                 .select("*")
                 .eq("id", project_id)
                 .execute()
@@ -171,8 +172,8 @@ class ProjectService:
 
                 try:
                     # Get source IDs from project_sources table
-                    sources_response = (
-                        self.supabase_client.table("archon_project_sources")
+                    sources_response = await (
+                        self.backend.table("archon_project_sources")
                         .select("source_id, notes")
                         .eq("project_id", project["id"])
                         .execute()
@@ -190,8 +191,8 @@ class ProjectService:
 
                     # Fetch full source objects
                     if technical_source_ids:
-                        tech_sources_response = (
-                            self.supabase_client.table("archon_sources")
+                        tech_sources_response = await (
+                            self.backend.table("archon_sources")
                             .select("*")
                             .in_("source_id", technical_source_ids)
                             .execute()
@@ -199,8 +200,8 @@ class ProjectService:
                         technical_sources = tech_sources_response.data
 
                     if business_source_ids:
-                        biz_sources_response = (
-                            self.supabase_client.table("archon_sources")
+                        biz_sources_response = await (
+                            self.backend.table("archon_sources")
                             .select("*")
                             .in_("source_id", business_source_ids)
                             .execute()
@@ -224,7 +225,7 @@ class ProjectService:
             logger.error(f"Error getting project: {e}")
             return False, {"error": f"Error getting project: {str(e)}"}
 
-    def delete_project(self, project_id: str) -> tuple[bool, dict[str, Any]]:
+    async def delete_project(self, project_id: str) -> tuple[bool, dict[str, Any]]:
         """
         Delete a project and all its associated tasks.
 
@@ -233,8 +234,8 @@ class ProjectService:
         """
         try:
             # First, check if project exists
-            check_response = (
-                self.supabase_client.table("archon_projects")
+            check_response = await (
+                self.backend.table("archon_projects")
                 .select("id")
                 .eq("id", project_id)
                 .execute()
@@ -243,8 +244,8 @@ class ProjectService:
                 return False, {"error": f"Project with ID {project_id} not found"}
 
             # Get task count for reporting
-            tasks_response = (
-                self.supabase_client.table("archon_tasks")
+            tasks_response = await (
+                self.backend.table("archon_tasks")
                 .select("id")
                 .eq("project_id", project_id)
                 .execute()
@@ -252,15 +253,15 @@ class ProjectService:
             tasks_count = len(tasks_response.data) if tasks_response.data else 0
 
             # Delete the project (tasks will be deleted by cascade)
-            response = (
-                self.supabase_client.table("archon_projects")
+            await (
+                self.backend.table("archon_projects")
                 .delete()
                 .eq("id", project_id)
                 .execute()
             )
 
-            # For DELETE operations, success is indicated by no error, not by response.data content
-            # response.data will be empty list [] even on successful deletion
+            # For DELETE operations, success is indicated by no error: the row set
+            # is empty even on a successful delete.
             return True, {
                 "project_id": project_id,
                 "deleted_tasks": tasks_count,
@@ -271,7 +272,7 @@ class ProjectService:
             logger.error(f"Error deleting project: {e}")
             return False, {"error": f"Error deleting project: {str(e)}"}
 
-    def get_project_features(self, project_id: str) -> tuple[bool, dict[str, Any]]:
+    async def get_project_features(self, project_id: str) -> tuple[bool, dict[str, Any]]:
         """
         Get features from a project's features JSONB field.
 
@@ -279,8 +280,8 @@ class ProjectService:
             Tuple of (success, result_dict)
         """
         try:
-            response = (
-                self.supabase_client.table("archon_projects")
+            response = await (
+                self.backend.table("archon_projects")
                 .select("features")
                 .eq("id", project_id)
                 .single()
@@ -314,7 +315,7 @@ class ProjectService:
             logger.error(f"Error getting project features: {e}")
             return False, {"error": f"Error getting project features: {str(e)}"}
 
-    def update_project(
+    async def update_project(
         self, project_id: str, update_fields: dict[str, Any]
     ) -> tuple[bool, dict[str, Any]]:
         """
@@ -347,8 +348,8 @@ class ProjectService:
             # Handle pinning logic - only one project can be pinned at a time
             if update_fields.get("pinned") is True:
                 # Unpin any other pinned projects first
-                unpin_response = (
-                    self.supabase_client.table("archon_projects")
+                unpin_response = await (
+                    self.backend.table("archon_projects")
                     .update({"pinned": False})
                     .neq("id", project_id)
                     .eq("pinned", True)
@@ -357,8 +358,8 @@ class ProjectService:
                 logger.debug(f"Unpinned {len(unpin_response.data or [])} other projects before pinning {project_id}")
 
             # Update the target project
-            response = (
-                self.supabase_client.table("archon_projects")
+            response = await (
+                self.backend.table("archon_projects")
                 .update(update_data)
                 .eq("id", project_id)
                 .execute()
@@ -369,8 +370,8 @@ class ProjectService:
                 return True, {"project": project, "message": "Project updated successfully"}
             else:
                 # If update didn't return data, fetch the project to ensure it exists and get current state
-                get_response = (
-                    self.supabase_client.table("archon_projects")
+                get_response = await (
+                    self.backend.table("archon_projects")
                     .select("*")
                     .eq("id", project_id)
                     .execute()

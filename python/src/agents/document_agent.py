@@ -250,7 +250,7 @@ class DocumentAgent(BaseAgent[DocumentDependencies, DocumentOperation]):
                 from ..services.projects.document_service import DocumentService
 
                 doc_service = DocumentService()
-                success, result_data = doc_service.add_document(
+                success, result_data = await doc_service.add_document(
                     project_id=ctx.deps.project_id,
                     document_type=document_type,
                     title=title,

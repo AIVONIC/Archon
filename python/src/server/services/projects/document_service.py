@@ -11,9 +11,8 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from src.server.utils import get_supabase_client
-
 from ...config.logfire_config import get_logger
+from ..storage import DatabaseBackend, get_database_backend
 
 logger = get_logger(__name__)
 
@@ -21,11 +20,11 @@ logger = get_logger(__name__)
 class DocumentService:
     """Service class for document operations within projects"""
 
-    def __init__(self, supabase_client=None):
-        """Initialize with optional supabase client"""
-        self.supabase_client = supabase_client or get_supabase_client()
+    def __init__(self, backend: DatabaseBackend | None = None):
+        """Initialize with optional database backend"""
+        self.backend = backend or get_database_backend()
 
-    def add_document(
+    async def add_document(
         self,
         project_id: str,
         document_type: str,
@@ -42,8 +41,8 @@ class DocumentService:
         """
         try:
             # Get current project
-            project_response = (
-                self.supabase_client.table("archon_projects")
+            project_response = await (
+                self.backend.table("archon_projects")
                 .select("docs")
                 .eq("id", project_id)
                 .execute()
@@ -71,8 +70,8 @@ class DocumentService:
             updated_docs = current_docs + [new_doc]
 
             # Update project
-            response = (
-                self.supabase_client.table("archon_projects")
+            response = await (
+                self.backend.table("archon_projects")
                 .update({"docs": updated_docs})
                 .eq("id", project_id)
                 .execute()
@@ -96,7 +95,9 @@ class DocumentService:
             logger.error(f"Error adding document: {e}")
             return False, {"error": f"Error adding document: {str(e)}"}
 
-    def list_documents(self, project_id: str, include_content: bool = False) -> tuple[bool, dict[str, Any]]:
+    async def list_documents(
+        self, project_id: str, include_content: bool = False
+    ) -> tuple[bool, dict[str, Any]]:
         """
         List all documents in a project's docs JSONB field.
 
@@ -109,8 +110,8 @@ class DocumentService:
             Tuple of (success, result_dict)
         """
         try:
-            response = (
-                self.supabase_client.table("archon_projects")
+            response = await (
+                self.backend.table("archon_projects")
                 .select("docs")
                 .eq("id", project_id)
                 .execute()
@@ -154,7 +155,7 @@ class DocumentService:
             logger.error(f"Error listing documents: {e}")
             return False, {"error": f"Error listing documents: {str(e)}"}
 
-    def get_document(self, project_id: str, doc_id: str) -> tuple[bool, dict[str, Any]]:
+    async def get_document(self, project_id: str, doc_id: str) -> tuple[bool, dict[str, Any]]:
         """
         Get a specific document from a project's docs JSONB field.
 
@@ -162,8 +163,8 @@ class DocumentService:
             Tuple of (success, result_dict)
         """
         try:
-            response = (
-                self.supabase_client.table("archon_projects")
+            response = await (
+                self.backend.table("archon_projects")
                 .select("docs")
                 .eq("id", project_id)
                 .execute()
@@ -192,7 +193,7 @@ class DocumentService:
             logger.error(f"Error getting document: {e}")
             return False, {"error": f"Error getting document: {str(e)}"}
 
-    def update_document(
+    async def update_document(
         self,
         project_id: str,
         doc_id: str,
@@ -207,8 +208,8 @@ class DocumentService:
         """
         try:
             # Get current project docs
-            project_response = (
-                self.supabase_client.table("archon_projects")
+            project_response = await (
+                self.backend.table("archon_projects")
                 .select("docs")
                 .eq("id", project_id)
                 .execute()
@@ -223,10 +224,10 @@ class DocumentService:
                 try:
                     from .versioning_service import VersioningService
 
-                    versioning = VersioningService(self.supabase_client)
+                    versioning = VersioningService(self.backend)
 
                     change_summary = self._build_change_summary(doc_id, update_fields)
-                    versioning.create_version(
+                    await versioning.create_version(
                         project_id=project_id,
                         field_name="docs",
                         content=current_docs,
@@ -271,8 +272,8 @@ class DocumentService:
                 }
 
             # Update the project
-            response = (
-                self.supabase_client.table("archon_projects")
+            response = await (
+                self.backend.table("archon_projects")
                 .update({"docs": docs, "updated_at": datetime.now().isoformat()})
                 .eq("id", project_id)
                 .execute()
@@ -294,7 +295,7 @@ class DocumentService:
             logger.error(f"Error updating document: {e}")
             return False, {"error": f"Error updating document: {str(e)}"}
 
-    def delete_document(self, project_id: str, doc_id: str) -> tuple[bool, dict[str, Any]]:
+    async def delete_document(self, project_id: str, doc_id: str) -> tuple[bool, dict[str, Any]]:
         """
         Delete a document from a project's docs JSONB field.
 
@@ -303,8 +304,8 @@ class DocumentService:
         """
         try:
             # Get current project docs
-            project_response = (
-                self.supabase_client.table("archon_projects")
+            project_response = await (
+                self.backend.table("archon_projects")
                 .select("docs")
                 .eq("id", project_id)
                 .execute()
@@ -324,8 +325,8 @@ class DocumentService:
                 }
 
             # Update the project
-            response = (
-                self.supabase_client.table("archon_projects")
+            response = await (
+                self.backend.table("archon_projects")
                 .update({"docs": docs, "updated_at": datetime.now().isoformat()})
                 .eq("id", project_id)
                 .execute()

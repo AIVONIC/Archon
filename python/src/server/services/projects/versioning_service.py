@@ -9,9 +9,8 @@ that can be shared between MCP tools and FastAPI endpoints.
 from datetime import datetime
 from typing import Any
 
-from src.server.utils import get_supabase_client
-
 from ...config.logfire_config import get_logger
+from ..storage import DatabaseBackend, get_database_backend
 
 logger = get_logger(__name__)
 
@@ -19,11 +18,11 @@ logger = get_logger(__name__)
 class VersioningService:
     """Service class for document versioning operations"""
 
-    def __init__(self, supabase_client=None):
-        """Initialize with optional supabase client"""
-        self.supabase_client = supabase_client or get_supabase_client()
+    def __init__(self, backend: DatabaseBackend | None = None):
+        """Initialize with optional database backend"""
+        self.backend = backend or get_database_backend()
 
-    def create_version(
+    async def create_version(
         self,
         project_id: str,
         field_name: str,
@@ -41,8 +40,8 @@ class VersioningService:
         """
         try:
             # Get current highest version number for this project/field
-            existing_versions = (
-                self.supabase_client.table("archon_document_versions")
+            existing_versions = await (
+                self.backend.table("archon_document_versions")
                 .select("version_number")
                 .eq("project_id", project_id)
                 .eq("field_name", field_name)
@@ -68,8 +67,8 @@ class VersioningService:
                 "created_at": datetime.now().isoformat(),
             }
 
-            result = (
-                self.supabase_client.table("archon_document_versions")
+            result = await (
+                self.backend.table("archon_document_versions")
                 .insert(version_data)
                 .execute()
             )
@@ -88,7 +87,9 @@ class VersioningService:
             logger.error(f"Error creating version: {e}")
             return False, {"error": f"Error creating version: {str(e)}"}
 
-    def list_versions(self, project_id: str, field_name: str = None) -> tuple[bool, dict[str, Any]]:
+    async def list_versions(
+        self, project_id: str, field_name: str = None
+    ) -> tuple[bool, dict[str, Any]]:
         """
         Get version history for project JSONB fields.
 
@@ -98,7 +99,7 @@ class VersioningService:
         try:
             # Build query
             query = (
-                self.supabase_client.table("archon_document_versions")
+                self.backend.table("archon_document_versions")
                 .select("*")
                 .eq("project_id", project_id)
             )
@@ -107,7 +108,7 @@ class VersioningService:
                 query = query.eq("field_name", field_name)
 
             # Get versions ordered by version number descending
-            result = query.order("version_number", desc=True).execute()
+            result = await query.order("version_number", desc=True).execute()
 
             if result.data is not None:
                 return True, {
@@ -123,7 +124,7 @@ class VersioningService:
             logger.error(f"Error getting version history: {e}")
             return False, {"error": f"Error getting version history: {str(e)}"}
 
-    def get_version_content(
+    async def get_version_content(
         self, project_id: str, field_name: str, version_number: int
     ) -> tuple[bool, dict[str, Any]]:
         """
@@ -134,8 +135,8 @@ class VersioningService:
         """
         try:
             # Query for specific version
-            result = (
-                self.supabase_client.table("archon_document_versions")
+            result = await (
+                self.backend.table("archon_document_versions")
                 .select("*")
                 .eq("project_id", project_id)
                 .eq("field_name", field_name)
@@ -158,7 +159,7 @@ class VersioningService:
             logger.error(f"Error getting version content: {e}")
             return False, {"error": f"Error getting version content: {str(e)}"}
 
-    def restore_version(
+    async def restore_version(
         self, project_id: str, field_name: str, version_number: int, restored_by: str = "system"
     ) -> tuple[bool, dict[str, Any]]:
         """
@@ -169,8 +170,8 @@ class VersioningService:
         """
         try:
             # Get the version to restore
-            version_result = (
-                self.supabase_client.table("archon_document_versions")
+            version_result = await (
+                self.backend.table("archon_document_versions")
                 .select("*")
                 .eq("project_id", project_id)
                 .eq("field_name", field_name)
@@ -187,8 +188,8 @@ class VersioningService:
             content_to_restore = version_to_restore["content"]
 
             # Get current content to create backup
-            current_project = (
-                self.supabase_client.table("archon_projects")
+            current_project = await (
+                self.backend.table("archon_projects")
                 .select(field_name)
                 .eq("id", project_id)
                 .execute()
@@ -197,7 +198,7 @@ class VersioningService:
                 current_content = current_project.data[0].get(field_name, {})
 
                 # Create backup version before restore
-                backup_result = self.create_version(
+                backup_result = await self.create_version(
                     project_id=project_id,
                     field_name=field_name,
                     content=current_content,
@@ -212,8 +213,8 @@ class VersioningService:
             # Restore the content to project
             update_data = {field_name: content_to_restore, "updated_at": datetime.now().isoformat()}
 
-            restore_result = (
-                self.supabase_client.table("archon_projects")
+            restore_result = await (
+                self.backend.table("archon_projects")
                 .update(update_data)
                 .eq("id", project_id)
                 .execute()
@@ -221,7 +222,7 @@ class VersioningService:
 
             if restore_result.data:
                 # Create restore version record
-                restore_version_result = self.create_version(
+                await self.create_version(
                     project_id=project_id,
                     field_name=field_name,
                     content=content_to_restore,
