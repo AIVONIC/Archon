@@ -16,7 +16,7 @@ from pydantic import BaseModel
 # Import logging
 from ..config.logfire_config import logfire
 from ..services.credential_service import credential_service, initialize_credentials
-from ..utils import get_supabase_client
+from ..services.storage import get_database_backend
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
@@ -283,34 +283,34 @@ async def database_metrics():
     """Get database metrics and statistics."""
     try:
         logfire.info("Getting database metrics")
-        supabase_client = get_supabase_client()
+        backend = get_database_backend()
 
         # Get various table counts
         tables_info = {}
 
         # Get projects count
-        projects_response = (
-            supabase_client.table("archon_projects").select("id", count="exact").execute()
+        projects_response = await (
+            backend.table("archon_projects").select("id", count="exact").execute()
         )
         tables_info["projects"] = (
             projects_response.count if projects_response.count is not None else 0
         )
 
         # Get tasks count
-        tasks_response = supabase_client.table("archon_tasks").select("id", count="exact").execute()
+        tasks_response = await backend.table("archon_tasks").select("id", count="exact").execute()
         tables_info["tasks"] = tasks_response.count if tasks_response.count is not None else 0
 
         # Get crawled pages count
-        pages_response = (
-            supabase_client.table("archon_crawled_pages").select("id", count="exact").execute()
+        pages_response = await (
+            backend.table("archon_crawled_pages").select("id", count="exact").execute()
         )
         tables_info["crawled_pages"] = (
             pages_response.count if pages_response.count is not None else 0
         )
 
         # Get settings count
-        settings_response = (
-            supabase_client.table("archon_settings").select("id", count="exact").execute()
+        settings_response = await (
+            backend.table("archon_settings").select("id", count="exact").execute()
         )
         tables_info["settings"] = (
             settings_response.count if settings_response.count is not None else 0
