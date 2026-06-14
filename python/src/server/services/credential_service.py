@@ -56,9 +56,8 @@ class CredentialService:
         return self._backend
 
     def _get_encryption_key(self) -> bytes:
-        """Generate encryption key from environment variables."""
-        # Use Supabase service key as the basis for encryption key
-        service_key = os.getenv("SUPABASE_SERVICE_KEY", "default-key-for-development")
+        """Derive the credential encryption key from ARCHON_CREDENTIAL_KEY."""
+        secret = os.getenv("ARCHON_CREDENTIAL_KEY", "default-key-for-development")
 
         # Generate a proper encryption key using PBKDF2
         kdf = PBKDF2HMAC(
@@ -67,7 +66,7 @@ class CredentialService:
             salt=b"static_salt_for_credentials",  # In production, consider using a configurable salt
             iterations=100000,
         )
-        key = base64.urlsafe_b64encode(kdf.derive(service_key.encode()))
+        key = base64.urlsafe_b64encode(kdf.derive(secret.encode()))
         return key
 
     def _encrypt_value(self, value: str) -> str:
