@@ -120,7 +120,7 @@ async def lifespan(app: FastAPI):
         _initialization_complete = True
         api_logger.info("🎉 Archon backend started successfully!")
 
-    except Exception as e:
+    except Exception:
         api_logger.error("❌ Failed to start backend", exc_info=True)
         raise
 
@@ -142,7 +142,7 @@ async def lifespan(app: FastAPI):
 
         api_logger.info("✅ Cleanup completed")
 
-    except Exception as e:
+    except Exception:
         api_logger.error("❌ Error during shutdown", exc_info=True)
 
 
@@ -280,12 +280,12 @@ async def _check_database_schema():
         return _schema_check_cache["result"]
 
     try:
-        from .services.client_manager import get_supabase_client
+        from .services.storage import get_database_backend
 
-        client = get_supabase_client()
+        backend = get_database_backend()
 
         # Try to query the new columns directly - if they exist, schema is up to date
-        client.table('archon_sources').select('source_url, source_display_name').limit(1).execute()
+        await backend.table('archon_sources').select('source_url, source_display_name').limit(1).execute()
 
         # Cache successful result permanently
         _schema_check_cache["valid"] = True

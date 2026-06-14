@@ -22,7 +22,7 @@ class KnowledgeSummaryService:
         Initialize the knowledge summary service.
 
         Args:
-            supabase_client: The Supabase client for database operations
+            backend: The database backend for database operations
         """
         self.backend = backend or get_database_backend()
 
