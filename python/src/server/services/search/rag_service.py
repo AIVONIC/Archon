@@ -229,7 +229,13 @@ class RAGService:
         return page_results[:match_count]
 
     async def perform_rag_query(
-        self, query: str, source: str = None, match_count: int = 5, return_mode: str = "chunks"
+        self,
+        query: str,
+        source: str = None,
+        match_count: int = 5,
+        return_mode: str = "chunks",
+        skip_reranking: bool = False,
+        tag: str = None,
     ) -> tuple[bool, dict[str, Any]]:
         """
         Unified RAG query with all strategies.
@@ -254,12 +260,86 @@ class RAGService:
             try:
                 logger.info(f"RAG query started: {query[:100]}{'...' if len(query) > 100 else ''}")
 
-                # Build filter metadata
-                filter_metadata = {"source": source} if source else None
+                # --- TAG FAST-PATH (agent KB retrieval) ---------------------
+                # One embed + one tag-scoped vector RPC over the whole agent
+                # KB. Bypasses the hybrid/vector strategy layer because (a)
+                # hybrid drops the JSONB metadata.tags filter and (b) the
+                # generic vector path does not route the configured embedding
+                # dimension.
+                #
+                # We deliberately request a large candidate ceiling
+                # (KB_SCAN_CEILING) rather than just match_count. A tag filter
+                # selects only ONE agent's chunks (tens, not the whole
+                # corpus), so Postgres does an exact filtered scan over that
+                # tiny subset - correct and fast - rather than letting the
+                # planner fall back to the global ANN index (whose probed
+                # lists can omit recently re-ingested rows). We then trim to
+                # match_count after ordering.
+                if tag:
+                    try:
+                        KB_SCAN_CEILING = 500
+                        query_embedding = await create_embedding(query)
+                        emb_dim = int(self.get_setting("EMBEDDING_DIMENSIONS", "384") or 384)
+                        rows = await self.backend.rpc(
+                            "match_archon_crawled_pages_multi",
+                            {
+                                "query_embedding": query_embedding,
+                                "embedding_dimension": emb_dim,
+                                "match_count": max(match_count, KB_SCAN_CEILING),
+                                "filter": {"tags": [tag]},
+                                "source_filter": None,
+                            },
+                        )
+                        # RPC already returns best-first (ORDER BY <=> asc).
+                        # Trim to the requested count after the exact scan.
+                        rows = (rows or [])[:match_count]
+                        formatted_results = [
+                            {
+                                "id": r.get("id", f"result_{i}"),
+                                "content": (r.get("content") or "")[:1000],
+                                "metadata": r.get("metadata", {}) or {},
+                                "similarity_score": r.get("similarity", 0.0),
+                            }
+                            for i, r in enumerate(rows)
+                        ]
+                        logger.info(
+                            f"RAG tag fast-path: tag={tag} dim={emb_dim} "
+                            f"results={len(formatted_results)}"
+                        )
+                        return True, {
+                            "results": formatted_results,
+                            "query": query,
+                            "source": None,
+                            "tag": tag,
+                            "match_count": match_count,
+                            "total_found": len(formatted_results),
+                            "execution_path": "rag_tag_fast_path",
+                            "search_mode": "vector",
+                            "reranking_applied": False,
+                            "return_mode": "chunks",
+                        }
+                    except Exception as tag_err:
+                        logger.error(f"RAG tag fast-path failed (tag={tag}): {tag_err!r}")
+                        return False, {"error": f"tag search failed: {tag_err}"}
+
+                # Build filter metadata. A `tag` scopes the search to every
+                # chunk whose metadata.tags contains it (one query = the whole
+                # agent KB, via JSONB `metadata @> {"tags":[tag]}`).
+                if tag:
+                    filter_metadata = {"tags": [tag]}
+                elif source:
+                    filter_metadata = {"source": source}
+                else:
+                    filter_metadata = None
 
                 # Check which strategies are enabled
                 use_hybrid_search = self.get_bool_setting("USE_HYBRID_SEARCH", False)
-                use_reranking = self.get_bool_setting("USE_RERANKING", False)
+                # Tag-scoped queries must use the pure vector path: the hybrid
+                # strategy does not apply the JSONB metadata.tags filter, so it
+                # would leak other agents' chunks.
+                if tag:
+                    use_hybrid_search = False
+                use_reranking = self.get_bool_setting("USE_RERANKING", False) and not skip_reranking
 
                 # If reranking is enabled, fetch more candidates for the reranker to evaluate
                 # This allows the reranker to see a broader set of results

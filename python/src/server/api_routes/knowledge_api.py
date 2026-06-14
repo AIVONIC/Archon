@@ -23,7 +23,6 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 # Basic validation - simplified inline version
-
 # Import unified logging
 from ..config.logfire_config import get_logger, safe_logfire_error, safe_logfire_info
 from ..services.crawler_manager import get_crawler
@@ -32,8 +31,7 @@ from ..services.credential_service import credential_service
 from ..services.embeddings.provider_error_adapters import ProviderErrorFactory
 from ..services.knowledge import DatabaseMetricsService, KnowledgeItemService, KnowledgeSummaryService
 from ..services.search.rag_service import RAGService
-from ..services.storage import DocumentStorageService
-from ..services.storage import get_database_backend
+from ..services.storage import DocumentStorageService, get_database_backend
 from ..utils.document_processing import extract_text_from_document
 
 # Get logger for this module
@@ -66,7 +64,7 @@ active_crawl_tasks: dict[str, asyncio.Task] = {}
 async def _validate_provider_api_key(provider: str = None) -> None:
     """Validate LLM provider API key before starting operations."""
     logger.info("🔑 Starting API key validation...")
-    
+
     try:
         # Basic provider validation
         if not provider:
@@ -120,8 +118,8 @@ async def _validate_provider_api_key(provider: str = None) -> None:
                     "error_type": "authentication_failed",
                     "provider": provider,
                 },
-            )
-            
+            ) from e
+
         logger.info(f"✅ {provider.title()} API key validation successful")
 
     except HTTPException:
@@ -133,7 +131,7 @@ async def _validate_provider_api_key(provider: str = None) -> None:
         error_str = str(e)
         sanitized_error = ProviderErrorFactory.sanitize_provider_error(error_str, provider or "openai")
         logger.error(f"❌ Caught exception during API key validation: {sanitized_error}")
-        
+
         # Always fail for any exception during validation - better safe than sorry
         logger.error("🚨 API key validation failed - blocking crawl operation")
         raise HTTPException(
@@ -182,12 +180,14 @@ class RagQueryRequest(BaseModel):
     source: str | None = None
     match_count: int = 5
     return_mode: str = "chunks"  # "chunks" or "pages"
+    skip_reranking: bool = False
+    tag: str | None = None  # agent KB retrieval: scope to one agent's chunks
 
 
 @router.get("/crawl-progress/{progress_id}")
 async def get_crawl_progress(progress_id: str):
     """Get crawl progress for polling.
-    
+
     Returns the current state of a crawl operation.
     Frontend should poll this endpoint to track crawl progress.
     """
@@ -224,7 +224,7 @@ async def get_crawl_progress(progress_id: str):
         return response_data
     except Exception as e:
         safe_logfire_error(f"Failed to get crawl progress | error={str(e)} | progress_id={progress_id}")
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 @router.get("/knowledge-items/sources")
@@ -236,7 +236,7 @@ async def get_knowledge_sources():
         return []
     except Exception as e:
         safe_logfire_error(f"Failed to get knowledge sources | error={str(e)}")
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 @router.get("/knowledge-items")
@@ -256,7 +256,7 @@ async def get_knowledge_items(
         safe_logfire_error(
             f"Failed to get knowledge items | error={str(e)} | page={page} | per_page={per_page}"
         )
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 @router.get("/knowledge-items/summary")
@@ -265,12 +265,12 @@ async def get_knowledge_items_summary(
 ):
     """
     Get lightweight summaries of knowledge items.
-    
+
     Returns minimal data optimized for frequent polling:
     - Only counts, no actual document/code content
     - Basic metadata for display
     - Efficient batch queries
-    
+
     Use this endpoint for card displays and frequent polling.
     """
     try:
@@ -287,7 +287,7 @@ async def get_knowledge_items_summary(
         safe_logfire_error(
             f"Failed to get knowledge summaries | error={str(e)} | page={page} | per_page={per_page}"
         )
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 @router.put("/knowledge-items/{source_id}")
@@ -312,7 +312,7 @@ async def update_knowledge_item(source_id: str, updates: dict):
         safe_logfire_error(
             f"Failed to update knowledge item | error={str(e)} | source_id={source_id}"
         )
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 @router.delete("/knowledge-items/{source_id}")
@@ -361,7 +361,7 @@ async def delete_knowledge_item(source_id: str):
         safe_logfire_error(
             f"Failed to delete knowledge item | error={str(e)} | source_id={source_id}"
         )
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 @router.get("/knowledge-items/{source_id}/chunks")
@@ -373,13 +373,13 @@ async def get_knowledge_item_chunks(
 ):
     """
     Get document chunks for a specific knowledge item with pagination.
-    
+
     Args:
         source_id: The source ID
         domain_filter: Optional domain filter for URLs
         limit: Maximum number of chunks to return (default 20, max 100)
         offset: Number of chunks to skip (for pagination)
-    
+
     Returns:
         Paginated chunks with metadata
     """
@@ -520,7 +520,7 @@ async def get_knowledge_item_chunks(
         safe_logfire_error(
             f"Failed to fetch chunks | error={str(e)} | source_id={source_id}"
         )
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 @router.get("/knowledge-items/{source_id}/code-examples")
@@ -531,12 +531,12 @@ async def get_knowledge_item_code_examples(
 ):
     """
     Get code examples for a specific knowledge item with pagination.
-    
+
     Args:
         source_id: The source ID
         limit: Maximum number of examples to return (default 20, max 100)
         offset: Number of examples to skip (for pagination)
-    
+
     Returns:
         Paginated code examples with metadata
     """
@@ -610,20 +610,20 @@ async def get_knowledge_item_code_examples(
         safe_logfire_error(
             f"Failed to fetch code examples | error={str(e)} | source_id={source_id}"
         )
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 @router.post("/knowledge-items/{source_id}/refresh")
 async def refresh_knowledge_item(source_id: str):
     """Refresh a knowledge item by re-crawling its URL with the same metadata."""
-    
+
     # Validate API key before starting expensive refresh operation
     logger.info("🔍 About to validate API key for refresh...")
     provider_config = await credential_service.get_active_provider("embedding")
     provider = provider_config.get("provider", "openai")
     await _validate_provider_api_key(provider)
     logger.info("✅ API key validation completed successfully for refresh")
-    
+
     try:
         safe_logfire_info(f"Starting knowledge item refresh | source_id={source_id}")
 
@@ -675,7 +675,7 @@ async def refresh_knowledge_item(source_id: str):
             safe_logfire_error(f"Failed to get crawler | error={str(e)}")
             raise HTTPException(
                 status_code=500, detail={"error": f"Failed to initialize crawler: {str(e)}"}
-            )
+            ) from e
 
         # Use the same crawl orchestration as regular crawl
         crawl_service = CrawlingService(
@@ -728,7 +728,7 @@ async def refresh_knowledge_item(source_id: str):
         safe_logfire_error(
             f"Failed to refresh knowledge item | error={str(e)} | source_id={source_id}"
         )
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 @router.post("/knowledge-items/crawl")
@@ -805,7 +805,7 @@ async def crawl_knowledge_item(request: KnowledgeItemRequest):
         return response.model_dump(by_alias=True)
     except Exception as e:
         safe_logfire_error(f"Failed to start crawl | error={str(e)} | url={str(request.url)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 async def _perform_crawl_with_progress(
@@ -902,14 +902,14 @@ async def upload_document(
     extract_code_examples: bool = Form(True),
 ):
     """Upload and process a document with progress tracking."""
-    
-    # Validate API key before starting expensive upload operation  
+
+    # Validate API key before starting expensive upload operation
     logger.info("🔍 About to validate API key for upload...")
     provider_config = await credential_service.get_active_provider("embedding")
     provider = provider_config.get("provider", "openai")
     await _validate_provider_api_key(provider)
     logger.info("✅ API key validation completed successfully for upload")
-    
+
     try:
         # DETAILED LOGGING: Track knowledge_type parameter flow
         safe_logfire_info(
@@ -930,7 +930,7 @@ async def upload_document(
             if not all(isinstance(tag, str) for tag in tag_list):
                 raise HTTPException(status_code=422, detail={"error": "tags must be a JSON array of strings"})
         except json.JSONDecodeError as ex:
-            raise HTTPException(status_code=422, detail={"error": f"Invalid tags JSON: {str(ex)}"})
+            raise HTTPException(status_code=422, detail={"error": f"Invalid tags JSON: {str(ex)}"}) from ex
 
         # Read file content immediately to avoid closed file issues
         file_content = await file.read()
@@ -972,7 +972,7 @@ async def upload_document(
         safe_logfire_error(
             f"Failed to start document upload | error={str(e)} | filename={file.filename} | error_type={type(e).__name__}"
         )
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 async def _perform_upload_with_progress(
@@ -1126,7 +1126,9 @@ async def perform_rag_query(request: RagQueryRequest):
             query=request.query,
             source=request.source,
             match_count=request.match_count,
-            return_mode=request.return_mode
+            return_mode=request.return_mode,
+            skip_reranking=request.skip_reranking,
+            tag=request.tag,
         )
 
         if success:
@@ -1143,7 +1145,7 @@ async def perform_rag_query(request: RagQueryRequest):
         safe_logfire_error(
             f"RAG query failed | error={str(e)} | query={request.query[:50]} | source={request.source}"
         )
-        raise HTTPException(status_code=500, detail={"error": f"RAG query failed: {str(e)}"})
+        raise HTTPException(status_code=500, detail={"error": f"RAG query failed: {str(e)}"}) from e
 
 
 @router.post("/rag/code-examples")
@@ -1179,7 +1181,7 @@ async def search_code_examples(request: RagQueryRequest):
         )
         raise HTTPException(
             status_code=500, detail={"error": f"Code examples search failed: {str(e)}"}
-        )
+        ) from e
 
 
 @router.post("/code-examples")
@@ -1204,7 +1206,7 @@ async def get_available_sources():
         return result
     except Exception as e:
         safe_logfire_error(f"Failed to get available sources | error={str(e)}")
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 @router.delete("/sources/{source_id}")
@@ -1239,7 +1241,7 @@ async def delete_source(source_id: str):
         raise
     except Exception as e:
         safe_logfire_error(f"Failed to delete source | error={str(e)} | source_id={source_id}")
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 @router.get("/database/metrics")
@@ -1252,7 +1254,7 @@ async def get_database_metrics():
         return metrics
     except Exception as e:
         safe_logfire_error(f"Failed to get database metrics | error={str(e)}")
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": str(e)}) from e
 
 
 @router.get("/health")
@@ -1349,4 +1351,4 @@ async def stop_crawl_task(progress_id: str):
         safe_logfire_error(
             f"Failed to stop crawl task | error={str(e)} | progress_id={progress_id}"
         )
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": str(e)}) from e

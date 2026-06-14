@@ -129,6 +129,39 @@ class TestRAGServiceSearch:
             assert result["query"] == "test query"
 
     @pytest.mark.asyncio
+    async def test_perform_rag_query_tag_fast_path(self, rag_service, mock_backend):
+        """Agent-KB retrieval (tag set) routes through the tag fast-path:
+        one embed + one tag-scoped RPC, bypassing the strategy/search layer."""
+        mock_backend.rpc.return_value = [
+            {"id": "c1", "content": "agent doc", "similarity": 0.91, "metadata": {"tags": ["acme-bot"]}},
+        ]
+        with (
+            patch("src.server.services.search.rag_service.create_embedding") as mock_embed,
+            patch.object(rag_service, "search_documents") as mock_search,
+        ):
+            mock_embed.return_value = [0.1] * 384
+
+            success, result = await rag_service.perform_rag_query(
+                query="what is the refund policy", match_count=5, tag="acme-bot"
+            )
+
+            assert success is True
+            assert result["execution_path"] == "rag_tag_fast_path"
+            assert result["tag"] == "acme-bot"
+            assert result["reranking_applied"] is False
+            assert len(result["results"]) == 1
+            assert result["results"][0]["content"] == "agent doc"
+
+            # The fast-path must NOT fall through to the generic strategy layer.
+            mock_search.assert_not_called()
+
+            # The RPC is tag-scoped via the JSONB metadata filter.
+            mock_backend.rpc.assert_called_once()
+            fn_name, params = mock_backend.rpc.call_args[0]
+            assert fn_name == "match_archon_crawled_pages_multi"
+            assert params["filter"] == {"tags": ["acme-bot"]}
+
+    @pytest.mark.asyncio
     async def test_search_code_examples_delegation(self, rag_service):
         """Test code examples search delegates to agentic strategy"""
         with patch.object(rag_service.agentic_strategy, "search_code_examples") as mock_agentic:
