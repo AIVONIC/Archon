@@ -21,6 +21,7 @@ import asyncpg
 
 from ...config.logfire_config import get_logger
 from .database_backend import DatabaseBackend
+from .query_builder import PostgresQueryBuilder
 
 logger = get_logger(__name__)
 
@@ -79,6 +80,13 @@ class PostgresBackend(DatabaseBackend):
         self._max_size = max_size
         self._pool: asyncpg.Pool | None = None
         self._lock = asyncio.Lock()
+        self._column_type_cache: dict[str, dict[str, str]] = {}
+        self._primary_key_cache: dict[str, str] = {}
+
+    @staticmethod
+    def validate_identifier(name: str) -> str:
+        """Public identifier check used by the query builder."""
+        return _validate_identifier(name, "identifier")
 
     async def _get_pool(self) -> asyncpg.Pool:
         """Lazily create the pool on first use (asyncpg pools need an event loop)."""
@@ -129,6 +137,54 @@ class PostgresBackend(DatabaseBackend):
         async with pool.acquire() as conn:
             row = await conn.fetchrow(sql, *values)
         return dict(row) if row is not None else None
+
+    def table(self, table: str) -> PostgresQueryBuilder:
+        """Start a fluent query against ``table`` (mirrors the Supabase client)."""
+        _validate_identifier(table, "table")
+        return PostgresQueryBuilder(self, table)
+
+    async def fetch(self, sql: str, params: list[Any]) -> list[dict[str, Any]]:
+        """Run a query and return rows as dicts."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql, *params)
+        return [dict(row) for row in rows]
+
+    async def fetchval(self, sql: str, params: list[Any]) -> Any:
+        """Run a query and return the first column of the first row."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetchval(sql, *params)
+
+    async def column_types(self, table: str) -> dict[str, str]:
+        """Return ``{column: data_type}`` for ``table`` (cached)."""
+        if table not in self._column_type_cache:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT column_name, data_type FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = $1",
+                    table,
+                )
+            self._column_type_cache[table] = {r["column_name"]: r["data_type"] for r in rows}
+        return self._column_type_cache[table]
+
+    async def primary_key(self, table: str) -> str:
+        """Return the comma-joined primary-key column(s) for ``table`` (cached)."""
+        if table not in self._primary_key_cache:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT a.attname FROM pg_index i "
+                    "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) "
+                    "WHERE i.indrelid = $1::regclass AND i.indisprimary "
+                    "ORDER BY array_position(i.indkey, a.attnum)",
+                    table,
+                )
+            if not rows:
+                raise ValueError(f"No primary key found for upsert on table {table!r}")
+            self._primary_key_cache[table] = ", ".join(r["attname"] for r in rows)
+        return self._primary_key_cache[table]
 
     async def close(self) -> None:
         if self._pool is not None:

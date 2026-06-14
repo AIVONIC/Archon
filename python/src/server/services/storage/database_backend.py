@@ -35,6 +35,18 @@ class DatabaseBackend(ABC):
         """
 
     @abstractmethod
+    def table(self, table: str) -> Any:
+        """Start a fluent query against ``table``.
+
+        Returns a builder supporting ``select``/``insert``/``update``/``upsert``/
+        ``delete`` terminals, ``eq``/``neq``/``gte``/``lte``/``in_``/``contains``/
+        ``or_ilike``/``include_unarchived`` filters, ``order``/``limit``/``single``
+        modifiers, and an awaitable ``execute()`` whose result exposes ``.data``
+        and ``.count``. The shape mirrors the Supabase client so call sites are
+        identical across backends.
+        """
+
+    @abstractmethod
     async def select_one(
         self, table: str, columns: str, match: dict[str, Any]
     ) -> dict[str, Any] | None:
