@@ -31,10 +31,10 @@ from .api_routes.pages_api import router as pages_router
 from .api_routes.progress_api import router as progress_router
 from .api_routes.projects_api import router as projects_router
 from .api_routes.providers_api import router as providers_router
-from .api_routes.version_api import router as version_router
 
 # Import modular API routers
 from .api_routes.settings_api import router as settings_router
+from .api_routes.version_api import router as version_router
 
 # Import Logfire configuration
 from .config.logfire_config import api_logger, setup_logfire
@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI):
         # Validate configuration FIRST - check for anon vs service key
         from .config.config import get_config
 
-        get_config()  # This will raise ConfigurationError if anon key detected
+        get_config()  # This will raise ConfigurationError if ARCHON_DATABASE_URL is missing
 
         # Initialize credentials from database FIRST - this is the foundation for everything else
         await initialize_credentials()

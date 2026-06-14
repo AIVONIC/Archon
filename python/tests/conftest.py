@@ -53,14 +53,22 @@ def ensure_test_environment():
     os.environ["ARCHON_MCP_PORT"] = "8051"
     os.environ["ARCHON_AGENTS_PORT"] = "8052"
     yield
-    
+
 
 @pytest.fixture(autouse=True)
 def reset_database_backend_singleton():
-    """Reset the cached database backend so each test rebuilds it from its mocks."""
-    from src.server.services.storage import reset_database_backend
+    """Install an async no-op FakeBackend as the default for every test.
+
+    Tests that need specific rows/counts inject their own backend via
+    ``set_database_backend(FakeBackend(data=..., count=...))``; everything else
+    gets this empty default so a missing ARCHON_DATABASE_URL never reaches the
+    real Postgres factory.
+    """
+    from src.server.services.storage import reset_database_backend, set_database_backend
+    from tests.fake_backend import FakeBackend
 
     reset_database_backend()
+    set_database_backend(FakeBackend(data=[]))
     yield
     reset_database_backend()
 
@@ -70,13 +78,13 @@ def prevent_real_db_calls():
     """Automatically prevent any real database calls in all tests."""
     # Create a mock client to use everywhere
     mock_client = MagicMock()
-    
+
     # Mock table operations with chaining support
     mock_table = MagicMock()
     mock_select = MagicMock()
     mock_or = MagicMock()
     mock_execute = MagicMock()
-    
+
     # Setup basic chaining
     mock_execute.data = []
     mock_or.execute.return_value = mock_execute
@@ -87,7 +95,7 @@ def prevent_real_db_calls():
     mock_table.select.return_value = mock_select
     mock_table.insert.return_value.execute.return_value.data = [{"id": "test-id"}]
     mock_client.table.return_value = mock_table
-    
+
     # Patch all the common ways to get a Supabase client
     with patch("supabase.create_client", return_value=mock_client):
         with patch("src.server.services.client_manager.get_supabase_client", return_value=mock_client):
@@ -156,6 +164,7 @@ def client(mock_supabase_client):
         ):
             with patch("supabase.create_client", return_value=mock_supabase_client):
                 from unittest.mock import AsyncMock
+
                 import src.server.main as server_main
 
                 # Mark initialization as complete for testing (before accessing app)

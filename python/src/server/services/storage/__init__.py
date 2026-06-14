@@ -20,7 +20,6 @@ from .factory import (
 from .postgres_backend import PostgresBackend
 from .query_builder import PostgresQueryBuilder, QueryResult
 from .storage_services import DocumentStorageService
-from .supabase_backend import SupabaseBackend
 
 __all__ = [
     # Base service
@@ -36,7 +35,6 @@ __all__ = [
     # Database backend abstraction
     "DatabaseBackend",
     "PostgresBackend",
-    "SupabaseBackend",
     "PostgresQueryBuilder",
     "QueryResult",
     "get_database_backend",
