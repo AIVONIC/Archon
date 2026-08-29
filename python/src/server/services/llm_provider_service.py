@@ -1116,6 +1116,23 @@ def prepare_chat_completion_params(model: str, params: dict) -> dict:
     # Make a copy to avoid modifying the original
     updated_params = params.copy()
 
+    # --- AIVONIC LOCAL PATCH: no-think for local gguf models ---------------------------------
+    # A local llama.cpp model served from a .gguf reasons before it answers, and
+    # Archon budgets these calls at 200 tokens. Qwen 3.6 spends all 200 thinking
+    # and returns an empty completion, so the chunk is embedded with blank
+    # context and nothing reports a failure. Asking the chat template to skip
+    # thinking returns a real answer in ~19 tokens.
+    #
+    # Gated on ".gguf" so this is never sent to a hosted vendor, which would 400.
+    # Re-apply after any Archon upgrade; upstream has no equivalent.
+    if ".gguf" in (model or ""):
+        extra = dict(updated_params.get("extra_body") or {})
+        kwargs = dict(extra.get("chat_template_kwargs") or {})
+        kwargs.setdefault("enable_thinking", False)
+        extra["chat_template_kwargs"] = kwargs
+        updated_params["extra_body"] = extra
+    # --- end AIVONIC LOCAL PATCH: no-think for local gguf models -----------------------------
+
     reasoning_model = is_reasoning_model(model)
 
     # Convert max_tokens to max_completion_tokens for reasoning models
