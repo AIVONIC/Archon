@@ -15,11 +15,11 @@ services:
         BUILDKIT_INLINE_CACHE: 1
         ARCHON_SERVER_PORT: ${ARCHON_SERVER_PORT:-8181}
     container_name: archon-server
+    cpus: 2.0
+    restart: unless-stopped
     ports:
       - "${ARCHON_SERVER_PORT:-8181}:${ARCHON_SERVER_PORT:-8181}"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
       - SERVICE_DISCOVERY_MODE=docker_compose
@@ -30,6 +30,8 @@ services:
       - AGENT_WORK_ORDERS_PORT=${AGENT_WORK_ORDERS_PORT:-8053}
       - AGENTS_ENABLED=${AGENTS_ENABLED:-false}
       - ARCHON_HOST=${HOST:-localhost}
+      - ARCHON_DATABASE_URL=${ARCHON_DATABASE_URL:-}
+      - ARCHON_CREDENTIAL_KEY=${ARCHON_CREDENTIAL_KEY}
     networks:
       - app-network
     volumes:
@@ -81,8 +83,6 @@ services:
     ports:
       - "${ARCHON_MCP_PORT:-8051}:${ARCHON_MCP_PORT:-8051}"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
       - SERVICE_DISCOVERY_MODE=docker_compose
       - TRANSPORT=sse
@@ -129,8 +129,6 @@ services:
     ports:
       - "${ARCHON_AGENTS_PORT:-8052}:${ARCHON_AGENTS_PORT:-8052}"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
       - SERVICE_DISCOVERY_MODE=docker_compose
@@ -173,8 +171,6 @@ services:
       - STATE_STORAGE_TYPE=supabase
       - ARCHON_SERVER_URL=http://archon-server:${ARCHON_SERVER_PORT:-8181}
       - ARCHON_MCP_URL=http://archon-mcp:${ARCHON_MCP_PORT:-8051}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
