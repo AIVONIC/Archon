@@ -280,11 +280,17 @@ class RAGService:
                         KB_SCAN_CEILING = 500
                         query_embedding = await create_embedding(query)
                         emb_dim = int(self.get_setting("EMBEDDING_DIMENSIONS", "384") or 384)
+                        # Hybrid, not pure vector. The keyword arm is what lets
+                        # an exact term find its document; without it a Swedish
+                        # corpus under an English embedding model ranks almost
+                        # arbitrarily. Same filter, applied in both arms, so the
+                        # tenant isolation this path relies on is unchanged.
                         rows = await self.backend.rpc(
-                            "match_archon_crawled_pages_multi",
+                            "hybrid_search_archon_crawled_pages_multi",
                             {
                                 "query_embedding": query_embedding,
                                 "embedding_dimension": emb_dim,
+                                "query_text": query,
                                 "match_count": max(match_count, KB_SCAN_CEILING),
                                 "filter": {"tags": [tag]},
                                 "source_filter": None,
@@ -314,7 +320,7 @@ class RAGService:
                             "match_count": match_count,
                             "total_found": len(formatted_results),
                             "execution_path": "rag_tag_fast_path",
-                            "search_mode": "vector",
+                            "search_mode": "hybrid",
                             "reranking_applied": False,
                             "return_mode": "chunks",
                         }
@@ -334,11 +340,21 @@ class RAGService:
 
                 # Check which strategies are enabled
                 use_hybrid_search = self.get_bool_setting("USE_HYBRID_SEARCH", False)
-                # Tag-scoped queries must use the pure vector path: the hybrid
-                # strategy does not apply the JSONB metadata.tags filter, so it
-                # would leak other agents' chunks.
-                if tag:
-                    use_hybrid_search = False
+                # Tag-scoped queries DO get hybrid search. An earlier guard here
+                # forced them onto the pure vector path, believing the hybrid
+                # strategy ignored the JSONB metadata filter and would leak other
+                # agents' chunks. It does not: both the dense arm and the keyword
+                # arm of hybrid_search_archon_crawled_pages_multi carry
+                # `WHERE cp.metadata @> filter`, and the 1536 entry point is a
+                # thin delegate to that same function. Re-verify with
+                # scripts/archon_hybrid_isolation_check.py before touching this,
+                # because the failure mode here is silent cross-tenant leakage.
+                #
+                # The guard was not free. It removed the lexical path from every
+                # tenant agent, so retrieval ran on 384-dim English embeddings
+                # alone, and Swedish content separates weakly under those: terms
+                # appearing only in one document ("bindningstid", "provperioden")
+                # did not retrieve that document at all.
                 use_reranking = self.get_bool_setting("USE_RERANKING", False) and not skip_reranking
 
                 # If reranking is enabled, fetch more candidates for the reranker to evaluate
