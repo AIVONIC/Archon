@@ -325,8 +325,20 @@ class RAGService:
                             "return_mode": "chunks",
                         }
                     except Exception as tag_err:
-                        logger.error(f"RAG tag fast-path failed (tag={tag}): {tag_err!r}")
-                        return False, {"error": f"tag search failed: {tag_err}"}
+                        # FALL THROUGH, do not fail the request. This is a FAST
+                        # path; the general path below handles `tag` via
+                        # filter_metadata={"tags": [tag]} with hybrid search and
+                        # returns the same results, just slower.
+                        #
+                        # Returning here turned a TRANSIENT index deadlock into a
+                        # customer-facing 500: measured 2026-09-02, 2 of 8 tagged
+                        # queries for `smartbyggai` failed - Martin's KB, during
+                        # live calls - while untagged queries returned 200
+                        # throughout, proving the machinery underneath was fine.
+                        logger.warning(
+                            f"RAG tag fast-path failed (tag={tag}), falling back to the "
+                            f"standard filtered path: {tag_err!r}"
+                        )
 
                 # Build filter metadata. A `tag` scopes the search to every
                 # chunk whose metadata.tags contains it (one query = the whole
