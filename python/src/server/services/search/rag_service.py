@@ -12,6 +12,7 @@ It combines multiple RAG strategies in a pipeline fashion:
 Multiple strategies can be enabled simultaneously and work together.
 """
 
+import asyncio  # deadlock retry backoff in the BM25 fast path
 import os
 from typing import Any
 
@@ -285,17 +286,38 @@ class RAGService:
                         # corpus under an English embedding model ranks almost
                         # arbitrarily. Same filter, applied in both arms, so the
                         # tenant isolation this path relies on is unchanged.
-                        rows = await self.backend.rpc(
-                            "hybrid_search_archon_crawled_pages_multi",
-                            {
-                                "query_embedding": query_embedding,
-                                "embedding_dimension": emb_dim,
-                                "query_text": query,
-                                "match_count": max(match_count, KB_SCAN_CEILING),
-                                "filter": {"tags": [tag]},
-                                "source_filter": None,
-                            },
-                        )
+                        # RETRY ON DEADLOCK. psql_bm25s takes a
+                        # ShareUpdateExclusiveLock for this SELECT while a bulk
+                        # INSERT into archon_crawled_pages takes an
+                        # AccessExclusiveLock on the same index, so any document
+                        # upload that overlaps a query deadlocks one of them.
+                        # Postgres kills one participant precisely so the other
+                        # can proceed - the victim's work was never impossible,
+                        # only unlucky, so retrying it is the fix. Bounded, with
+                        # a short backoff: a live call must not hang on a lock.
+                        _rpc_args = {
+                            "query_embedding": query_embedding,
+                            "embedding_dimension": emb_dim,
+                            "query_text": query,
+                            "match_count": max(match_count, KB_SCAN_CEILING),
+                            "filter": {"tags": [tag]},
+                            "source_filter": None,
+                        }
+                        rows = None
+                        for _attempt in range(3):
+                            try:
+                                rows = await self.backend.rpc(
+                                    "hybrid_search_archon_crawled_pages_multi", _rpc_args
+                                )
+                                break
+                            except Exception as _rpc_err:
+                                if "deadlock" not in str(_rpc_err).lower() or _attempt == 2:
+                                    raise
+                                logger.warning(
+                                    f"RAG tag fast-path deadlock (tag={tag}), "
+                                    f"retry {_attempt + 1}/2"
+                                )
+                                await asyncio.sleep(0.25 * (_attempt + 1))
                         # RPC already returns best-first (ORDER BY <=> asc).
                         # Trim to the requested count after the exact scan.
                         rows = (rows or [])[:match_count]
