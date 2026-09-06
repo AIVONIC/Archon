@@ -78,6 +78,9 @@ async def add_documents_to_supabase(
 
         # Get unique URLs to delete existing records
         unique_urls = list(set(urls))
+        # Defined here, not only inside the except branch, so the filter below can
+        # rely on it in every path.
+        failed_urls: list[str] = []
 
         # Delete existing records for these URLs in batches
         try:
@@ -140,6 +143,37 @@ async def add_documents_to_supabase(
 
             if failed_urls:
                 search_logger.error(f"Failed to delete {len(failed_urls)} URLs")
+
+        # ⛔ DO NOT INSERT CHUNKS WHOSE DELETE FAILED.
+        #
+        # This block used to log "Failed to delete N URLs" and then insert those
+        # URLs anyway, straight into a GUARANTEED violation of the unique index on
+        # (url, chunk_number). The error then surfaced at the INSERT, so every
+        # symptom pointed at the wrong operation: the batch insert retried three
+        # times with exponential backoff against a deterministic constraint error,
+        # fell through to individual inserts, and each of those failed too.
+        # Measured 2026-09-05: 60 error lines and an ORPHAN source row with zero
+        # chunks for file://LEDGER.md, from one re-ingest.
+        #
+        # Skipping is not data loss: the chunks already in the table ARE the
+        # previous version of that document, so it stays retrievable at its old
+        # content instead of half-updated. The end state is identical to what the
+        # collisions produced anyway - this reaches it without the error storm, and
+        # says plainly which documents were NOT refreshed.
+        if failed_urls:
+            _skip = set(failed_urls)
+            _keep = [k for k, u in enumerate(urls) if u not in _skip]
+            if len(_keep) != len(urls):
+                search_logger.error(
+                    f"NOT inserting {len(urls) - len(_keep)} chunk(s) for "
+                    f"{len(_skip)} URL(s) whose existing rows could not be deleted; "
+                    f"those documents keep their PREVIOUS content and were not "
+                    f"refreshed: {sorted(_skip)[:5]}"
+                )
+                urls = [urls[k] for k in _keep]
+                chunk_numbers = [chunk_numbers[k] for k in _keep]
+                contents = [contents[k] for k in _keep]
+                metadatas = [metadatas[k] for k in _keep]
 
         # Check if contextual embeddings are enabled (use credential_service)
 
