@@ -357,9 +357,14 @@ class RAGService:
                         # queries for `smartbyggai` failed - Martin's KB, during
                         # live calls - while untagged queries returned 200
                         # throughout, proving the machinery underneath was fine.
-                        logger.warning(
-                            f"RAG tag fast-path failed (tag={tag}), falling back to the "
-                            f"standard filtered path: {tag_err!r}"
+                        # ERROR, not warning, ON PURPOSE. This line means all
+                        # retries were exhausted. error_aggregator scans for
+                        # ERROR|CRITICAL only, so at WARNING a worsening deadlock
+                        # rate would be invisible - the retry would hide the very
+                        # problem it exists to survive.
+                        logger.error(
+                            f"RAG tag fast-path EXHAUSTED its retries (tag={tag}), falling "
+                            f"back to the standard filtered path: {tag_err!r}"
                         )
 
                 # Build filter metadata. A `tag` scopes the search to every
