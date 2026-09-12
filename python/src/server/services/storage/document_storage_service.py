@@ -76,17 +76,64 @@ async def add_documents_to_supabase(
             delete_batch_size = max(1, 50)
             # enable_parallel = True
 
-        # Get unique URLs to delete existing records
-        unique_urls = list(set(urls))
+        # ⛔ SCOPE THE DELETE BY (source_id, url). NEVER BY url ALONE.
+        #
+        # `url` here is `file://<basename>` and carries NO source identity, so a
+        # delete filtered on url alone removes EVERY source's chunks for that
+        # basename. Uploading any `README.md` silently emptied every other
+        # `README.md` in the knowledge base: the source row survived with ZERO
+        # chunks, so the document stayed listed and became unretrievable, while the
+        # uploader still logged `Document upload completed successfully`.
+        #
+        # Measured victims: CC-135 and a LEDGER.md (2026-09-07), and the E3 INO
+        # spec index (destroyed 2026-09-11, found 2026-09-12 by the
+        # `archon-unreachable-docs` watch).
+        #
+        # ⛔ THE UNIQUE INDEX CANNOT PROTECT AGAINST THIS, and believing it could
+        # is why this outlived two investigations. `idx_archon_cp_source_url_chunk`
+        # governs the INSERT; by the time it is consulted the other document's rows
+        # are already deleted. Widening the index was the right fix for duplicate
+        # inserts and the wrong layer for this. The DELETE is the operation that was
+        # asking the wrong question, and no constraint can answer it for us.
+        #
+        # Chunks with no source_id are skipped here because the insert below skips
+        # them too (it refuses to create orphan rows), so there is nothing to replace.
+        def _sid_at(k: int):
+            return (metadatas[k] or {}).get("source_id") if k < len(metadatas) else None
+
+        delete_pairs: list[tuple[str, str]] = []
+        _seen_pairs: set[tuple[str, str]] = set()
+        for _k, _u in enumerate(urls):
+            _sid = _sid_at(_k)
+            if not _sid:
+                continue
+            if (_sid, _u) not in _seen_pairs:
+                _seen_pairs.add((_sid, _u))
+                delete_pairs.append((_sid, _u))
+
         # Defined here, not only inside the except branch, so the filter below can
         # rely on it in every path.
-        failed_urls: list[str] = []
+        failed_pairs: list[tuple[str, str]] = []
 
-        # Delete existing records for these URLs in batches
+        async def _delete_pair_batch(batch: list[tuple[str, str]]) -> None:
+            """Delete existing rows for a batch, one statement per source_id."""
+            by_source: dict[str, list[str]] = {}
+            for _sid, _u in batch:
+                by_source.setdefault(_sid, []).append(_u)
+            for _sid, _batch_urls in by_source.items():
+                await (
+                    backend.table("archon_crawled_pages")
+                    .delete()
+                    .eq("source_id", _sid)
+                    .in_("url", _batch_urls)
+                    .execute()
+                )
+
+        # Delete existing records for these (source_id, url) pairs in batches
         try:
-            if unique_urls:
+            if delete_pairs:
                 # Delete in configured batch sizes
-                for i in range(0, len(unique_urls), delete_batch_size):
+                for i in range(0, len(delete_pairs), delete_batch_size):
                     # Check for cancellation before each delete batch
                     if cancellation_check:
                         try:
@@ -98,24 +145,23 @@ async def add_documents_to_supabase(
                                     99,
                                     "Storage cancelled during deletion",
                                     current_batch=i // delete_batch_size + 1,
-                                    total_batches=(len(unique_urls) + delete_batch_size - 1) // delete_batch_size
+                                    total_batches=(len(delete_pairs) + delete_batch_size - 1) // delete_batch_size
                                 )
                             raise
 
-                    batch_urls = unique_urls[i : i + delete_batch_size]
-                    await backend.table("archon_crawled_pages").delete().in_("url", batch_urls).execute()
+                    await _delete_pair_batch(delete_pairs[i : i + delete_batch_size])
                     # Yield control to allow other async operations
-                    if i + delete_batch_size < len(unique_urls):
+                    if i + delete_batch_size < len(delete_pairs):
                         await asyncio.sleep(0.05)  # Reduced pause between delete batches
                 search_logger.info(
-                    f"Deleted existing records for {len(unique_urls)} URLs in batches"
+                    f"Deleted existing records for {len(delete_pairs)} (source_id, url) pair(s) in batches"
                 )
         except Exception as e:
             search_logger.warning(f"Batch delete failed: {e}. Trying smaller batches as fallback.")
             # Fallback: delete in smaller batches with rate limiting
-            failed_urls = []
+            failed_pairs = []
             fallback_batch_size = max(1, min(10, delete_batch_size // 5))
-            for i in range(0, len(unique_urls), fallback_batch_size):
+            for i in range(0, len(delete_pairs), fallback_batch_size):
                 # Check for cancellation before each fallback delete batch
                 if cancellation_check:
                     try:
@@ -127,22 +173,24 @@ async def add_documents_to_supabase(
                                 99,
                                 "Storage cancelled during fallback deletion",
                                 current_batch=i // fallback_batch_size + 1,
-                                total_batches=(len(unique_urls) + fallback_batch_size - 1) // fallback_batch_size
+                                total_batches=(len(delete_pairs) + fallback_batch_size - 1) // fallback_batch_size
                             )
                         raise
 
-                batch_urls = unique_urls[i : i + fallback_batch_size]
+                batch_pairs = delete_pairs[i : i + fallback_batch_size]
                 try:
-                    await backend.table("archon_crawled_pages").delete().in_("url", batch_urls).execute()
+                    await _delete_pair_batch(batch_pairs)
                     await asyncio.sleep(0.05)  # Rate limit to prevent overwhelming
                 except Exception as inner_e:
                     search_logger.error(
-                        f"Error deleting batch of {len(batch_urls)} URLs: {inner_e}"
+                        f"Error deleting batch of {len(batch_pairs)} (source_id, url) pair(s): {inner_e}"
                     )
-                    failed_urls.extend(batch_urls)
+                    failed_pairs.extend(batch_pairs)
 
-            if failed_urls:
-                search_logger.error(f"Failed to delete {len(failed_urls)} URLs")
+            if failed_pairs:
+                search_logger.error(
+                    f"Failed to delete {len(failed_pairs)} (source_id, url) pair(s)"
+                )
 
         # ⛔ DO NOT INSERT CHUNKS WHOSE DELETE FAILED.
         #
@@ -160,15 +208,18 @@ async def add_documents_to_supabase(
         # content instead of half-updated. The end state is identical to what the
         # collisions produced anyway - this reaches it without the error storm, and
         # says plainly which documents were NOT refreshed.
-        if failed_urls:
-            _skip = set(failed_urls)
-            _keep = [k for k, u in enumerate(urls) if u not in _skip]
+        # Keyed on (source_id, url), matching the delete above. Keying this on url
+        # alone would drop a healthy document's chunks because a DIFFERENT source
+        # sharing its basename failed to delete.
+        if failed_pairs:
+            _skip = set(failed_pairs)
+            _keep = [k for k, u in enumerate(urls) if (_sid_at(k), u) not in _skip]
             if len(_keep) != len(urls):
                 search_logger.error(
                     f"NOT inserting {len(urls) - len(_keep)} chunk(s) for "
-                    f"{len(_skip)} URL(s) whose existing rows could not be deleted; "
-                    f"those documents keep their PREVIOUS content and were not "
-                    f"refreshed: {sorted(_skip)[:5]}"
+                    f"{len(_skip)} (source_id, url) pair(s) whose existing rows could not "
+                    f"be deleted; those documents keep their PREVIOUS content and were "
+                    f"not refreshed: {sorted(_skip)[:5]}"
                 )
                 urls = [urls[k] for k in _keep]
                 chunk_numbers = [chunk_numbers[k] for k in _keep]

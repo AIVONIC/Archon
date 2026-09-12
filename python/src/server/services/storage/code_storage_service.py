@@ -28,6 +28,19 @@ from ..llm_provider_service import (
 )
 
 
+def _resolve_source_id(metadata: dict | None, url: str) -> str:
+    """The source a code example belongs to: metadata first, else derived from the url.
+
+    ONE definition, used by both the delete and the insert below. They used to
+    resolve this separately, which is the shape that lets a delete and an insert
+    disagree about which document they are touching.
+    """
+    if metadata and metadata.get("source_id"):
+        return metadata["source_id"]
+    parsed_url = urlparse(url)
+    return parsed_url.netloc or parsed_url.path
+
+
 def _extract_json_payload(raw_response: str, context_code: str = "", language: str = "") -> str:
     """Return the best-effort JSON object from an LLM response."""
 
@@ -1154,13 +1167,40 @@ async def add_code_examples_to_supabase(
     if not urls:
         return
 
-    # Delete existing records for these URLs
-    unique_urls = list(set(urls))
-    for url in unique_urls:
+    # ⛔ SCOPE THE DELETE BY (source_id, url). NEVER BY url ALONE.
+    #
+    # Same defect as document_storage_service, same reason: `url` is
+    # `file://<basename>` and carries no source identity, so a url-only delete
+    # wipes the code examples of every source sharing a basename.
+    #
+    # This table only fired later than the chunk table because a document with no
+    # code blocks returns early above, never reaching the delete. That is luck,
+    # not safety.
+    #
+    # Requires the UNIQUE (source_id, url, chunk_number) index from migration
+    # `011_code_examples_source_scoped_unique.sql`. Scoping the delete WITHOUT that
+    # index converts this silent loss into a hard duplicate-key failure, because the
+    # rows this insert used to clear out of its way would now legitimately remain.
+    delete_pairs: list[tuple[str, str]] = []
+    _seen: set[tuple[str, str]] = set()
+    for _k, _u in enumerate(urls):
+        _sid = _resolve_source_id(metadatas[_k] if _k < len(metadatas) else None, _u)
+        if (_sid, _u) not in _seen:
+            _seen.add((_sid, _u))
+            delete_pairs.append((_sid, _u))
+    for _sid, _u in delete_pairs:
         try:
-            await backend.table("archon_code_examples").delete().eq("url", url).execute()
+            await (
+                backend.table("archon_code_examples")
+                .delete()
+                .eq("source_id", _sid)
+                .eq("url", _u)
+                .execute()
+            )
         except Exception as e:
-            search_logger.error(f"Error deleting existing code examples for {url}: {e}")
+            search_logger.error(
+                f"Error deleting existing code examples for source={_sid} url={_u}: {e}"
+            )
 
     # Check if contextual embeddings are enabled (use proper async method like document storage)
     try:
@@ -1290,12 +1330,8 @@ async def add_code_examples_to_supabase(
 
             idx = orig_idx  # Global index into urls/chunk_numbers/etc.
 
-            # Use source_id from metadata if available, otherwise extract from URL
-            if metadatas[idx] and "source_id" in metadatas[idx]:
-                source_id = metadatas[idx]["source_id"]
-            else:
-                parsed_url = urlparse(urls[idx])
-                source_id = parsed_url.netloc or parsed_url.path
+            # Same resolver the delete above uses, so the two cannot disagree.
+            source_id = _resolve_source_id(metadatas[idx], urls[idx])
 
             # Determine the correct embedding column based on dimension
             embedding_dim = len(embedding) if isinstance(embedding, list) else len(embedding.tolist())
