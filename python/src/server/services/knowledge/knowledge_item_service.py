@@ -97,10 +97,29 @@ class KnowledgeItemService:
                     .execute()
                 )
 
-                # Group URLs by source_id (take first one for each)
+                # Group URLs by source_id (take first one for each), and COUNT the
+                # rows while we are walking them.
+                #
+                # chunks_count used to be hardcoded to 0 a few lines below,
+                # unconditionally, with the comment "Default to 0 to avoid timeout".
+                # Not a fallback on a slow query - there was no query. So every one
+                # of 1071 documents reported zero chunks to the UI and to anything
+                # else reading this field.
+                #
+                # That is worse than a missing number. A count that is always zero
+                # cannot report a document going empty, which is exactly the loss
+                # the url-scoped delete used to cause (649e7c1): the source row
+                # survived with no chunks and stayed listed, while the one field
+                # that could have surfaced it already said zero.
+                #
+                # It costs nothing to fix: this query is already fetching one row
+                # per chunk for these sources and the counts were being thrown
+                # away. No extra round trip, and no timeout to avoid.
                 for item in urls_result.data or []:
-                    if item["source_id"] not in first_urls:
-                        first_urls[item["source_id"]] = item["url"]
+                    sid = item["source_id"]
+                    if sid not in first_urls:
+                        first_urls[sid] = item["url"]
+                    chunk_counts[sid] = chunk_counts.get(sid, 0) + 1
 
                 # Get code example counts per source - NO CONTENT, just counts!
                 # Fetch counts individually for each source
@@ -115,11 +134,13 @@ class KnowledgeItemService:
                         count_result.count if hasattr(count_result, "count") else 0
                     )
 
-                # Ensure all sources have a count (default to 0)
+                # Ensure all sources have a count. A source genuinely holding no
+                # chunks now reports 0 because it HAS none - a real finding, and the
+                # thing the old hardcoded 0 made unsayable.
                 for source_id in source_ids:
                     if source_id not in code_example_counts:
                         code_example_counts[source_id] = 0
-                    chunk_counts[source_id] = 0  # Default to 0 to avoid timeout
+                    chunk_counts.setdefault(source_id, 0)
 
                 safe_logfire_info(f"Code example counts: {code_example_counts}")
 
