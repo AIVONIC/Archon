@@ -23,6 +23,24 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
       - SERVICE_DISCOVERY_MODE=docker_compose
+      # ⛔ TORCH READS THE HOST'S CORE COUNT, NOT THE CONTAINER'S LIMIT.
+      # `cpus: 2.0` above caps this container at 2 CPUs, but torch sees the
+      # host's 8 cores and spawns 8 threads to fight over them. Measured
+      # 2026-09-17, reranking 20 candidates with ms-marco-MiniLM-L-6-v2 INSIDE
+      # this container:
+      #     threads=8  median 3116ms  max 4010ms   <- the default
+      #     threads=4  median 2164ms  max 4644ms
+      #     threads=2  median 1554ms  max 1703ms   <- matches cpus: 2.0
+      #     threads=1  median 2702ms  max 2917ms
+      # Twice as fast and a far tighter tail, same weights.
+      #
+      # The SAME fix was applied to prompt-guard, where the uncapped pool was
+      # spinning against the voice worker, LiveKit, Postgres and the agents. It
+      # was never applied here, and archon-server also loads a torch model.
+      # Keep this equal to `cpus:` if that ever changes.
+      - OMP_NUM_THREADS=2
+      - MKL_NUM_THREADS=2
+      - TORCH_NUM_THREADS=2
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ARCHON_SERVER_PORT=${ARCHON_SERVER_PORT:-8181}
       - ARCHON_MCP_PORT=${ARCHON_MCP_PORT:-8051}

@@ -32,3 +32,15 @@ release-notes-*.md
 # Internal docs, not public
 docs/
 !docs/README.md
+
+# ⛔ .env is ignored above, but .env.bak.* was NOT -- and two such files sat
+# here holding 3 populated secrets, one "git add -A" away from GitHub. The
+# habit that protects a file (take a backup first) is the habit that exposed
+# it. Backups belong in /root/edit-backups, never beside the original; these
+# patterns are the second line of defence for when someone forgets.
+*.bak
+*.bak.*
+.env.*.bak
+.env.preSymlink.bak
+*.orig
+*.save
