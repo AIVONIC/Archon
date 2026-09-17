@@ -307,7 +307,7 @@ class RAGService:
                         for _attempt in range(3):
                             try:
                                 rows = await self.backend.rpc(
-                                    "hybrid_search_archon_crawled_pages_multi", _rpc_args
+                                    "hybrid_search_archon_crawled_pages_multi_v2", _rpc_args
                                 )
                                 break
                             except Exception as _rpc_err:
@@ -327,6 +327,22 @@ class RAGService:
                                 "content": (r.get("content") or "")[:1000],
                                 "metadata": r.get("metadata", {}) or {},
                                 "similarity_score": r.get("similarity", 0.0),
+                                # ⛔ THE SCORE ABOVE IS RANK FUSION, NOT RELEVANCE.
+                                #
+                                # `similarity` is the RRF score: 1/(60+vec_rank) + 1/(60+bm25_rank).
+                                # It is derived from POSITION only, so every query has a rank-1 hit and
+                                # the values sit in a narrow band whatever was asked. Measured 2026-09-11
+                                # against a 448k-chunk corpus: "chocolate cake recipe" scored 0.0315 and
+                                # the on-topic "registry pages and charters" scored 0.0309. A relevance
+                                # threshold built on it would rank cake above the answer.
+                                #
+                                # The true cosine was computed all along, inside the vector_ranked CTE,
+                                # and thrown away. The _v2 function returns it. Same two queries:
+                                # 0.7414 on-topic against 0.5834 for cake.
+                                #
+                                # 0.0 means the row matched on BM25 only and has no vector rank, which is
+                                # information, not a missing value: a keyword hit with no semantic support.
+                                "vector_similarity": r.get("vector_similarity", 0.0),
                             }
                             for i, r in enumerate(rows)
                         ]

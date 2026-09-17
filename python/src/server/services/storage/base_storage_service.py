@@ -16,6 +16,22 @@ from urllib.parse import urlparse
 
 from ...config.logfire_config import get_logger, safe_span
 
+import os as _os
+
+# Chunk size is a function of the EMBEDDING MODEL's context window, not a
+# constant. Archon's default model (text-embedding-3-small) accepts 8191 tokens,
+# so the historical 5000-char default was correct for it. A deployment that
+# repoints embeddings at a smaller local model must shrink this or the tail of
+# every chunk is silently truncated away and becomes unsearchable -- measured on
+# this estate at 92% of chunks affected, ~49% of their text lost.
+#
+# 1200 chars is ~300 tokens, comfortably inside a 512-token local model with room
+# for the "query: "/"passage: " prefix. Raise it via ARCHON_CHUNK_SIZE only after
+# checking the model actually accepts it.
+DEFAULT_CHUNK_SIZE = int(_os.environ.get("ARCHON_CHUNK_SIZE", "1200"))
+
+
+
 logger = get_logger(__name__)
 
 
@@ -36,7 +52,7 @@ class BaseStorageService(ABC):
 
         self.threading_service = get_utils_threading_service()
 
-    def smart_chunk_text(self, text: str, chunk_size: int = 5000) -> list[str]:
+    def smart_chunk_text(self, text: str, chunk_size: int = DEFAULT_CHUNK_SIZE) -> list[str]:
         """
         Split text into chunks intelligently, preserving context.
 
@@ -120,7 +136,7 @@ class BaseStorageService(ABC):
         return chunks
 
     async def smart_chunk_text_async(
-        self, text: str, chunk_size: int = 5000, progress_callback: Callable | None = None
+        self, text: str, chunk_size: int = DEFAULT_CHUNK_SIZE, progress_callback: Callable | None = None
     ) -> list[str]:
         """
         Async version of smart_chunk_text with optional progress reporting.

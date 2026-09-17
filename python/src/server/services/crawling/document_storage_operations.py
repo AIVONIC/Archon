@@ -16,6 +16,22 @@ from ..storage.document_storage_service import add_documents_to_supabase
 from ..storage.storage_services import DocumentStorageService
 from .code_extraction_service import CodeExtractionService
 
+import os as _os
+
+# Chunk size is a function of the EMBEDDING MODEL's context window, not a
+# constant. Archon's default model (text-embedding-3-small) accepts 8191 tokens,
+# so the historical 5000-char default was correct for it. A deployment that
+# repoints embeddings at a smaller local model must shrink this or the tail of
+# every chunk is silently truncated away and becomes unsearchable -- measured on
+# this estate at 92% of chunks affected, ~49% of their text lost.
+#
+# 1200 chars is ~300 tokens, comfortably inside a 512-token local model with room
+# for the "query: "/"passage: " prefix. Raise it via ARCHON_CHUNK_SIZE only after
+# checking the model actually accepts it.
+DEFAULT_CHUNK_SIZE = int(_os.environ.get("ARCHON_CHUNK_SIZE", "1200"))
+
+
+
 logger = get_logger(__name__)
 
 
@@ -105,7 +121,7 @@ class DocumentStorageOperations:
             url_to_full_document[doc_url] = markdown_content
 
             # CHUNK THE CONTENT
-            chunks = await storage_service.smart_chunk_text_async(markdown_content, chunk_size=5000)
+            chunks = await storage_service.smart_chunk_text_async(markdown_content, chunk_size=DEFAULT_CHUNK_SIZE)
 
             # Use the original source_id for all documents
             source_id = original_source_id
@@ -205,7 +221,7 @@ class DocumentStorageOperations:
                 # Update url_to_full_document with section content
                 url_to_full_document[section.url] = section.content
                 section_chunks = await storage_service.smart_chunk_text_async(
-                    section.content, chunk_size=5000
+                    section.content, chunk_size=DEFAULT_CHUNK_SIZE
                 )
 
                 for i, chunk in enumerate(section_chunks):
