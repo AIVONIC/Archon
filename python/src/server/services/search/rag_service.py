@@ -29,6 +29,22 @@ from .reranking_strategy import RerankingStrategy
 logger = get_logger(__name__)
 
 
+# ⛔ ONE reranker per process, not one per request. knowledge_api.py constructs
+# RAGService() for every /api/rag/query, and RerankingStrategy() loads the
+# cross-encoder from disk - measured 2026-09-21 in this server's log: "Loading
+# reranking model" on every query, ~2 s each. That load was most of the "+3.34 s"
+# that got reranking switched off on 2026-09-17. The model is immutable; load it once.
+_SHARED_RERANKER = None
+
+
+def _shared_reranker():
+    global _SHARED_RERANKER
+    if _SHARED_RERANKER is None:
+        _SHARED_RERANKER = RerankingStrategy()
+        logger.info("Reranking strategy loaded once for this process")
+    return _SHARED_RERANKER
+
+
 class RAGService:
     """
     Coordinator service that orchestrates multiple RAG strategies.
@@ -53,8 +69,7 @@ class RAGService:
         use_reranking = self.get_bool_setting("USE_RERANKING", False)
         if use_reranking:
             try:
-                self.reranking_strategy = RerankingStrategy()
-                logger.info("Reranking strategy loaded successfully")
+                self.reranking_strategy = _shared_reranker()
             except Exception as e:
                 logger.warning(f"Failed to load reranking strategy: {e}")
                 self.reranking_strategy = None
@@ -319,8 +334,25 @@ class RAGService:
                                 )
                                 await asyncio.sleep(0.25 * (_attempt + 1))
                         # RPC already returns best-first (ORDER BY <=> asc).
-                        # Trim to the requested count after the exact scan.
-                        rows = (rows or [])[:match_count]
+                        #
+                        # ⛔ RERANK HERE TOO. This fast path returned the RRF order
+                        # and `reranking_applied: False` while the general path
+                        # below reranked - and EVERY agent query carries a tag, so
+                        # the 2026-09-17 "reranking ON" change (measured better
+                        # 6/8) applied to zero production queries. Found 2026-09-21
+                        # when a single writer could not find the price table for
+                        # "two dental clinics ... what does it cost": the RRF order
+                        # put it outside the top 8 (scores 0.0315 .. 0.0271, a
+                        # band the comment below says is position, not relevance).
+                        # Same 5x candidate pool as the general path, same
+                        # reranker, then trim to match_count.
+                        _use_rerank = (
+                            self.get_bool_setting("USE_RERANKING", False)
+                            and not skip_reranking
+                            and self.reranking_strategy is not None
+                        )
+                        _pool = match_count * 5 if _use_rerank else match_count
+                        rows = (rows or [])[:_pool]
                         formatted_results = [
                             {
                                 "id": r.get("id", f"result_{i}"),
@@ -346,9 +378,23 @@ class RAGService:
                             }
                             for i, r in enumerate(rows)
                         ]
+                        _reranked = False
+                        if _use_rerank and formatted_results:
+                            try:
+                                formatted_results = await self.reranking_strategy.rerank_results(
+                                    query, formatted_results, content_key="content", top_k=match_count
+                                )
+                                _reranked = True
+                            except Exception as _re:
+                                # Fail OPEN to the RRF order, and say so: a broken
+                                # reranker must cost quality, never the answer.
+                                logger.warning(f"RAG tag fast-path rerank failed, RRF order kept: {_re}")
+                                formatted_results = formatted_results[:match_count]
+                        else:
+                            formatted_results = formatted_results[:match_count]
                         logger.info(
                             f"RAG tag fast-path: tag={tag} dim={emb_dim} "
-                            f"results={len(formatted_results)}"
+                            f"results={len(formatted_results)} reranked={_reranked}"
                         )
                         return True, {
                             "results": formatted_results,
@@ -359,7 +405,7 @@ class RAGService:
                             "total_found": len(formatted_results),
                             "execution_path": "rag_tag_fast_path",
                             "search_mode": "hybrid",
-                            "reranking_applied": False,
+                            "reranking_applied": _reranked,
                             "return_mode": "chunks",
                         }
                     except Exception as tag_err:
