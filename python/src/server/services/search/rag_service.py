@@ -35,6 +35,7 @@ logger = get_logger(__name__)
 # reranking model" on every query, ~2 s each. That load was most of the "+3.34 s"
 # that got reranking switched off on 2026-09-17. The model is immutable; load it once.
 _SHARED_RERANKER = None
+RERANK_POOL_MAX = int(os.environ.get("RERANK_POOL_MAX", "15"))
 
 
 def _shared_reranker():
@@ -351,7 +352,10 @@ class RAGService:
                             and not skip_reranking
                             and self.reranking_strategy is not None
                         )
-                        _pool = match_count * 5 if _use_rerank else match_count
+                        # Pool capped: 40 candidates x 1,000 chars measured 3-6.7 s on this
+                        # box's two CPU threads. 15 keeps the cross-encoder under ~1.5 s
+                        # until it moves to the GPU box, where it belongs.
+                        _pool = min(match_count * 3, RERANK_POOL_MAX) if _use_rerank else match_count
                         rows = (rows or [])[:_pool]
                         formatted_results = [
                             {

@@ -8,6 +8,7 @@ a trained neural model, typically improving precision over initial retrieval sco
 Uses the cross-encoder/ms-marco-MiniLM-L-6-v2 model for reranking by default.
 """
 
+import asyncio
 import os
 from typing import Any
 
@@ -174,7 +175,12 @@ class RerankingStrategy:
 
                 # Get reranking scores from the model
                 with safe_span("crossencoder_predict"):
-                    scores = self.model.predict(query_doc_pairs)
+                    # ⛔ OFF THE EVENT LOOP. predict() is CPU-bound and took 2-6 s on this
+                    # box's two threads; called synchronously here it stalled EVERY other
+                    # request on the server for that long - another tenant's KB lookup
+                    # during a live voice call included. torch releases the GIL inside the
+                    # forward pass, so a worker thread keeps the loop serving. 2026-09-21.
+                    scores = await asyncio.to_thread(self.model.predict, query_doc_pairs)
 
                 # Apply scores and sort results
                 reranked_results = self.apply_rerank_scores(results, scores, valid_indices, top_k)
