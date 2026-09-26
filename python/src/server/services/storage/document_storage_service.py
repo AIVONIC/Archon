@@ -14,6 +14,33 @@ from ..embeddings.contextual_embedding_service import generate_contextual_embedd
 from ..embeddings.embedding_service import create_embeddings_batch
 
 
+class SourceDeletedDuringIngest(Exception):
+    """Every source this ingest was writing was deleted while it ran; nothing left to store."""
+
+
+async def _missing_source_ids(backend, source_ids: set[str]) -> set[str]:
+    """Which of `source_ids` no longer have a row in archon_sources.
+
+    The authoritative answer, asked of the database rather than of an in-process registry, so it
+    holds across processes and restarts. A lookup failure answers "none missing": this is a
+    work-saving check, and the FK still refuses the insert if the row really is gone.
+    """
+    if not source_ids:
+        return set()
+    try:
+        resp = await (
+            backend.table("archon_sources")
+            .select("source_id")
+            .in_("source_id", sorted(source_ids))
+            .execute()
+        )
+    except Exception as e:  # noqa: BLE001
+        search_logger.warning(f"Source liveness check failed, continuing: {e}")
+        return set()
+    present = {r["source_id"] for r in (resp.data or [])}
+    return set(source_ids) - present
+
+
 async def add_documents_to_supabase(
     backend,
     urls: list[str],
@@ -242,6 +269,7 @@ async def add_documents_to_supabase(
         completed_batches = 0
         total_batches = (len(contents) + batch_size - 1) // batch_size
         total_chunks_stored = 0
+        gone_sources: set[str] = set()
 
         # Process in batches to avoid memory issues
         for batch_num, i in enumerate(range(0, len(contents), batch_size), 1):
@@ -267,6 +295,37 @@ async def add_documents_to_supabase(
             batch_chunk_numbers = chunk_numbers[i:batch_end]
             batch_contents = contents[i:batch_end]
             batch_metadatas = metadatas[i:batch_end]
+
+            # ⛔ Is the source this batch writes still there? A source deleted mid-ingest (a
+            # re-sync replacing the document, or a removal) used to be discovered only by the
+            # INSERT, after this batch had already paid for its contextual summaries on the
+            # chat model - then retried 3x and tried every chunk individually, all against a
+            # FK that could not pass. Ask before spending, and drop only the chunks whose source
+            # is gone: a crawl can carry several sources and the others are still wanted.
+            _batch_sids = {(m or {}).get("source_id") for m in batch_metadatas} - {None}
+            _newly_gone = await _missing_source_ids(backend, _batch_sids - gone_sources)
+            if _newly_gone:
+                gone_sources |= _newly_gone
+                search_logger.warning(
+                    f"Source(s) deleted while this ingest was running; not storing their remaining "
+                    f"chunks: {sorted(_newly_gone)}"
+                )
+            if gone_sources & _batch_sids:
+                _keep = [k for k, m in enumerate(batch_metadatas)
+                         if (m or {}).get("source_id") not in gone_sources]
+                batch_urls = [batch_urls[k] for k in _keep]
+                batch_chunk_numbers = [batch_chunk_numbers[k] for k in _keep]
+                batch_contents = [batch_contents[k] for k in _keep]
+                batch_metadatas = [batch_metadatas[k] for k in _keep]
+                if not batch_contents:
+                    _remaining = {(m or {}).get("source_id") for m in metadatas[batch_end:]} - {None}
+                    if not (_remaining - gone_sources):
+                        raise SourceDeletedDuringIngest(
+                            f"all sources of this ingest were deleted mid-run: {sorted(gone_sources)}; "
+                            f"{total_chunks_stored} chunk(s) had been stored"
+                        )
+                    completed_batches += 1
+                    continue
 
             # Simple batch progress - only track completed batches
             current_progress = int((completed_batches / total_batches) * 100)
@@ -560,6 +619,21 @@ async def add_documents_to_supabase(
                         await asyncio.sleep(retry_delay)
                         retry_delay *= 2  # Exponential backoff
                     else:
+                        # A source deleted between the pre-batch check and this insert fails the
+                        # FK on every attempt. That is a superseded ingest, not a storage fault:
+                        # drop its records instead of retrying each one against a missing row.
+                        _gone_now = await _missing_source_ids(
+                            backend, {r.get("source_id") for r in batch_data} - {None}
+                        )
+                        if _gone_now:
+                            gone_sources |= _gone_now
+                            batch_data = [r for r in batch_data if r.get("source_id") not in gone_sources]
+                            search_logger.warning(
+                                f"Batch {batch_num}: source(s) deleted mid-ingest, not storing their "
+                                f"chunks: {sorted(_gone_now)}"
+                            )
+                            if not batch_data:
+                                break
                         search_logger.error(
                             f"Failed to insert batch after {max_retries} attempts: {e}"
                         )

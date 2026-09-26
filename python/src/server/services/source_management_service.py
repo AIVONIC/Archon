@@ -408,6 +408,13 @@ class SourceManagementService:
         try:
             logger.info(f"Starting delete_source for source_id: {source_id}")
 
+            # Stop any upload still WRITING this source before deleting it, or its remaining
+            # batches keep paying for LLM summaries and fail the FK against a row that is gone
+            # (see storage/ingest_registry.py). Done first so no insert lands after the delete.
+            from .storage.ingest_registry import cancel_ingest
+
+            ingest_cancelled = await cancel_ingest(source_id)
+
             # With CASCADE DELETE, we only need to delete from the sources table
             # The database will automatically handle deleting related records
             logger.info(f"Deleting source {source_id} (CASCADE will handle related records)")
@@ -426,6 +433,14 @@ class SourceManagementService:
                 return True, {
                     "source_id": source_id,
                     "message": "Source and all related data deleted successfully via CASCADE DELETE"
+                }
+            elif ingest_cancelled:
+                # The upload was stopped before it created its row: there was nothing stored to
+                # delete, and the caller's intent (this source must not exist) is satisfied.
+                logger.info(f"Source {source_id} had no stored row yet; its in-flight upload was cancelled")
+                return True, {
+                    "source_id": source_id,
+                    "message": "In-flight upload cancelled before anything was stored",
                 }
             else:
                 logger.warning(f"No source found with ID {source_id}")

@@ -996,6 +996,8 @@ async def _perform_upload_with_progress(
     from ..services.crawling.progress_mapper import ProgressMapper
     progress_mapper = ProgressMapper()
 
+    source_id = None
+    ingest_task = None
     try:
         filename = file_metadata["filename"]
         content_type = file_metadata["content_type"]
@@ -1035,6 +1037,13 @@ async def _perform_upload_with_progress(
 
         # Generate source_id from filename with UUID to prevent collisions
         source_id = f"file_{filename.replace(' ', '_').replace('.', '_')}_{uuid.uuid4().hex[:8]}"
+
+        # Registered BEFORE the source row exists, so a delete of this source_id can stop the
+        # upload even while it is still summarising (services/storage/ingest_registry.py).
+        from ..services.storage import ingest_registry
+
+        ingest_task = asyncio.current_task()
+        ingest_registry.register(source_id, ingest_task)
 
         # Create progress callback for tracking document processing
         async def document_progress_callback(
@@ -1081,6 +1090,15 @@ async def _perform_upload_with_progress(
             error_msg = result.get("error", "Unknown error")
             await tracker.error(error_msg)
 
+    except asyncio.CancelledError:
+        # Stopped on purpose: a delete of this source (ingest_registry) or the stop endpoint.
+        # Say so in the tracker, which would otherwise sit at "storing" forever.
+        try:
+            await tracker.error("Upload cancelled before completion; nothing more will be stored")
+        except Exception:  # noqa: BLE001 - reporting must not mask the cancellation
+            pass
+        logger.info(f"Document upload cancelled | progress_id={progress_id} | source_id={source_id}")
+        raise
     except Exception as e:
         error_msg = f"Upload failed: {str(e)}"
         await tracker.error(error_msg)
@@ -1090,6 +1108,10 @@ async def _perform_upload_with_progress(
         )
     finally:
         # Clean up task from registry when done (success or failure)
+        if source_id is not None:
+            from ..services.storage import ingest_registry
+
+            ingest_registry.unregister(source_id, ingest_task)
         if progress_id in active_crawl_tasks:
             del active_crawl_tasks[progress_id]
             safe_logfire_info(f"Cleaned up upload task from registry | progress_id={progress_id}")

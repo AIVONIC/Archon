@@ -9,7 +9,7 @@ from typing import Any
 
 from ...config.logfire_config import get_logger, safe_span
 from .base_storage_service import BaseStorageService
-from .document_storage_service import add_documents_to_supabase
+from .document_storage_service import SourceDeletedDuringIngest, add_documents_to_supabase
 
 import os as _os
 
@@ -149,8 +149,10 @@ class DocumentStorageService(BaseStorageService):
 
                 await report_progress("Storing document chunks...", 70)
 
-                # Store documents
-                await add_documents_to_supabase(
+                # Store documents. Keep what it RETURNS: the count of chunks actually stored.
+                # This used to be discarded and len(chunks) reported instead, so an upload whose
+                # inserts all failed still logged "completed successfully, chunks_stored=390".
+                storage_stats = await add_documents_to_supabase(
                     backend=self.backend,
                     urls=urls,
                     chunk_numbers=chunk_numbers,
@@ -218,10 +220,27 @@ class DocumentStorageService(BaseStorageService):
                         logger.error(f"Code extraction failed for {filename}: {e}", exc_info=True)
                         code_examples_count = 0
                 
+                chunks_stored = int((storage_stats or {}).get("chunks_stored", 0))
+                if chunks_stored < len(chunks):
+                    # Not a success: part of the document is not retrievable, and saying
+                    # "completed" is how a half-stored document went unnoticed before.
+                    logger.error(
+                        f"Document upload INCOMPLETE: filename={filename}, source_id={source_id}, "
+                        f"chunks_stored={chunks_stored} of {len(chunks)}"
+                    )
+                    span.set_attribute("success", False)
+                    span.set_attribute("chunks_stored", chunks_stored)
+                    return False, {
+                        "error": f"Stored {chunks_stored} of {len(chunks)} chunks for {filename}",
+                        "chunks_stored": chunks_stored,
+                        "chunks_total": len(chunks),
+                        "source_id": source_id,
+                    }
+
                 await report_progress("Document upload completed!", 100)
 
                 result = {
-                    "chunks_stored": len(chunks),
+                    "chunks_stored": chunks_stored,
                     "code_examples_stored": code_examples_count,
                     "total_word_count": total_word_count,
                     "source_id": source_id,
@@ -229,15 +248,23 @@ class DocumentStorageService(BaseStorageService):
                 }
 
                 span.set_attribute("success", True)
-                span.set_attribute("chunks_stored", len(chunks))
+                span.set_attribute("chunks_stored", chunks_stored)
                 span.set_attribute("code_examples_stored", code_examples_count)
                 span.set_attribute("total_word_count", total_word_count)
 
                 logger.info(
-                    f"Document upload completed successfully: filename={filename}, chunks_stored={len(chunks)}, code_examples_stored={code_examples_count}, total_word_count={total_word_count}"
+                    f"Document upload completed successfully: filename={filename}, chunks_stored={chunks_stored}, code_examples_stored={code_examples_count}, total_word_count={total_word_count}"
                 )
 
                 return True, result
+
+            except SourceDeletedDuringIngest as e:
+                # Superseded or removed while ingesting: an expected outcome of a document being
+                # replaced, not a storage fault, so it is a warning and not an error storm.
+                span.set_attribute("success", False)
+                span.set_attribute("abandoned", True)
+                logger.warning(f"Document upload abandoned, its source was deleted mid-ingest: {filename}: {e}")
+                return False, {"error": f"Upload abandoned: {e}", "abandoned": True, "source_id": source_id}
 
             except Exception as e:
                 span.set_attribute("success", False)
