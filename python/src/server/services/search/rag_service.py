@@ -38,12 +38,31 @@ _SHARED_RERANKER = None
 RERANK_POOL_MAX = int(os.environ.get("RERANK_POOL_MAX", "15"))
 
 
+_SHARED_RERANKER_LOCK = __import__("threading").Lock()
+
+
 def _shared_reranker():
     global _SHARED_RERANKER
-    if _SHARED_RERANKER is None:
-        _SHARED_RERANKER = RerankingStrategy()
-        logger.info("Reranking strategy loaded once for this process")
+    with _SHARED_RERANKER_LOCK:
+        if _SHARED_RERANKER is None:
+            _SHARED_RERANKER = RerankingStrategy()
+            logger.info("Reranking strategy loaded once for this process")
     return _SHARED_RERANKER
+
+
+def warm_reranker() -> None:
+    """Load and exercise the reranker before the first visitor needs it.
+
+    Loading was lazy, so the first query after every restart paid it: 11.2 s
+    measured by aivonic-bf on 2026-10-04. Called in a thread from the app lifespan.
+    """
+    try:
+        r = _shared_reranker()
+        if r.model is not None:
+            r.model.predict([("warm up", "warm up the reranker before the first query")])
+            logger.info("Reranker warmed up")
+    except Exception as e:  # noqa: BLE001 - a warm-up must never stop the server
+        logger.error(f"Reranker warm-up failed: {e}")
 
 
 class RAGService:

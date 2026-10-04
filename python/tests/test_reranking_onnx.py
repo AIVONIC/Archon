@@ -103,3 +103,98 @@ def test_loading_falls_back_to_torch_unless_onnx_is_proven(monkeypatch, backend,
     model = rs.RerankingStrategy().model
     assert isinstance(model, _Fake) is expect_onnx
     assert (model is torch_model) is (not expect_onnx)
+
+
+# ── The GPU reranker on the DGX first, the local model as the fallback ──────────────────────────────
+
+class _Resp:
+    def __init__(self, status, body):
+        self.status_code, self._body = status, body
+
+    def raise_for_status(self):
+        if self.status_code != 200:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def json(self):
+        return self._body
+
+
+class _Client:
+    def __init__(self, behave):
+        self.behave, self.calls = behave, 0
+
+    def post(self, url, json):
+        self.calls += 1
+        return self.behave(json)
+
+
+def _remote(behave, local=None, cooldown=30.0):
+    client = _Client(behave)
+    r = rs.RemoteFirstReranker("http://dgx", rs.DEFAULT_RERANKING_MODEL, local or _CE(), 0.5, cooldown, client=client)
+    return r, client
+
+
+def _ok(scores):
+    return lambda body: _Resp(200, {"model": body["model"], "scores": scores[: len(body["pairs"])]})
+
+
+def test_the_gpu_answers_first():
+    r, c = _remote(_ok([0.3, 0.7, 0.1]))
+    assert np.allclose(r.predict([("q", "a"), ("q", "b"), ("q", "c")]), [0.3, 0.7, 0.1])
+    assert r.last_path == "remote" and c.calls == 1
+
+
+@pytest.mark.parametrize("behave", [
+    lambda body: (_ for _ in ()).throw(TimeoutError("read timeout")),                  # DGX blip
+    lambda body: _Resp(503, {}),                                                         # server error
+    lambda body: _Resp(200, {"model": body["model"], "scores": [0.1]}),                 # wrong count
+    lambda body: _Resp(200, {"model": "another-model", "scores": [0.1, 0.2, 0.3]}),     # wrong model
+])
+def test_any_remote_problem_falls_back_to_the_local_model_and_cools_down(behave):
+    r, c = _remote(behave, local=_CE(scores=[0.9, 0.1, 0.5]))
+    out = r.predict([("q", "a"), ("q", "b"), ("q", "c")])
+    assert r.last_path == "local" and np.allclose(out, [0.9, 0.1, 0.5])
+    r.predict([("q", "a"), ("q", "b"), ("q", "c")])
+    assert c.calls == 1                       # skipped during the cooldown: one timeout per window, not per query
+
+
+def test_after_the_cooldown_the_gpu_is_tried_again():
+    state = {"up": False}
+    r, c = _remote(lambda body: _Resp(200, {"model": body["model"], "scores": [0.5]}) if state["up"]
+                   else _Resp(503, {}), cooldown=0.0)
+    r.predict([("q", "a")])
+    state["up"] = True
+    r.predict([("q", "a")])
+    assert r.last_path == "remote" and c.calls == 2
+
+
+@pytest.mark.parametrize("url,reply,expect_remote", [
+    ("", None, False),                                               # not configured: local only
+    ("http://dgx", "same", True),                                    # ranks like local: used
+    ("http://dgx", "different", False),                             # ranks differently: never used
+    ("http://dgx", "down", True),                                    # down at load: tried per call
+])
+def test_the_remote_is_put_in_front_only_when_it_ranks_like_local(monkeypatch, url, reply, expect_remote):
+    monkeypatch.setattr(rs, "RERANK_REMOTE_URL", url)
+    local = _CE(scores=[0.9, 0.1, 0.5])
+    strat = rs.RerankingStrategy.from_model(local, model_name=rs.DEFAULT_RERANKING_MODEL)
+
+    def fake_scores(self, pairs):
+        if reply == "down":
+            raise ConnectionError("refused")
+        return np.asarray([0.9, 0.1, 0.5] if reply == "same" else [0.1, 0.9, 0.5])
+    monkeypatch.setattr(rs.RemoteFirstReranker, "remote_scores", fake_scores)
+    out = strat._with_remote(local)
+    assert isinstance(out, rs.RemoteFirstReranker) is expect_remote
+    if not expect_remote:
+        assert out is local
+
+
+def test_the_warm_up_exercises_the_model(monkeypatch):
+    from src.server.services.search import rag_service
+
+    calls = []
+    fake = type("S", (), {"model": type("M", (), {"predict": lambda self, p: calls.append(p)})()})()
+    monkeypatch.setattr(rag_service, "_SHARED_RERANKER", fake)
+    rag_service.warm_reranker()
+    assert len(calls) == 1

@@ -158,8 +158,11 @@ class TestRAGServiceSearch:
             # The RPC is tag-scoped via the JSONB metadata filter.
             mock_backend.rpc.assert_called_once()
             fn_name, params = mock_backend.rpc.call_args[0]
-            assert fn_name == "match_archon_crawled_pages_multi"
+            # Hybrid since 2026-09-11 (6b3f06c): the keyword arm is what lets an exact
+            # term find its document; the tag filter applies in both arms.
+            assert fn_name == "hybrid_search_archon_crawled_pages_multi_v2"
             assert params["filter"] == {"tags": ["acme-bot"]}
+            assert params["query_text"]                 # the keyword arm gets the words
 
     @pytest.mark.asyncio
     async def test_search_code_examples_delegation(self, rag_service):

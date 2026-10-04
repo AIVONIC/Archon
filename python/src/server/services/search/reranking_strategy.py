@@ -10,6 +10,8 @@ Uses the cross-encoder/ms-marco-MiniLM-L-6-v2 model for reranking by default.
 
 import asyncio
 import os
+import threading
+import time
 from typing import Any
 
 try:
@@ -77,6 +79,70 @@ class OnnxCrossEncoder:
         return scores.reshape(-1).numpy()
 
 
+# ⛔ THE SAME MODEL ON THE DGX GPU, FIRST (2026-10-04). On 63 SPARK queries via the
+# VPS socket proxy: p50 69 ms, p95 82, max 105, against ~770 ms for the local ONNX
+# pass; same top-15 order 63/63 and same SPARK context 63/63 (max diff 1.4e-5;
+# the server runs fp32 with TF32 off). Unset RERANK_REMOTE_URL = local only.
+RERANK_REMOTE_URL = os.getenv("RERANK_REMOTE_URL", "").strip().rstrip("/")
+RERANK_REMOTE_TIMEOUT_S = float(os.getenv("RERANK_REMOTE_TIMEOUT_S", "0.5"))
+RERANK_REMOTE_COOLDOWN_S = float(os.getenv("RERANK_REMOTE_COOLDOWN_S", "30"))
+
+
+class RemoteFirstReranker:
+    """The GPU reranker on the DGX first; the local model (ONNX or torch) as the automatic fallback.
+
+    A failed, slow or malformed remote answer costs ONE local prediction, never a
+    failed rerank; after a failure the remote is skipped for `cooldown_s`, so a dead
+    DGX costs one timeout per window, not one per query. Every fallback is logged
+    at ERROR: a degraded mode nobody hears about is how this estate's outages hide.
+    """
+
+    def __init__(self, url: str, model_name: str, local: Any, timeout_s: float = 0.5,
+                 cooldown_s: float = 30.0, client: Any = None):
+        self._url = url
+        self._model_name = model_name
+        self._local = local
+        self._timeout_s = timeout_s
+        self._cooldown_s = cooldown_s
+        self._client = client
+        self._lock = threading.Lock()
+        self._down_until = 0.0
+        self.last_path: str | None = None
+
+    def _http(self):
+        if self._client is None:
+            import httpx
+
+            self._client = httpx.Client(timeout=self._timeout_s)
+        return self._client
+
+    def remote_scores(self, pairs: list[list[str]]):
+        """The remote's scores for `pairs`; raises on any problem."""
+        import numpy as np
+
+        r = self._http().post(f"{self._url}/rerank", json={"model": self._model_name, "pairs": pairs})
+        r.raise_for_status()
+        body = r.json()
+        scores = body["scores"]
+        if body.get("model") != self._model_name or len(scores) != len(pairs):
+            raise ValueError(f"mismatched reply: model {body.get('model')!r}, {len(scores)} scores for {len(pairs)} pairs")
+        return np.asarray(scores, dtype=np.float32)
+
+    def predict(self, sentences, **kwargs: Any):
+        pairs = [[str(a), str(b)] for a, b in sentences]
+        if pairs and time.monotonic() >= self._down_until:   # in-process cooldown: worst case one wasted call
+            try:
+                out = self.remote_scores(pairs)
+                self.last_path = "remote"
+                return out
+            except Exception as e:
+                with self._lock:
+                    self._down_until = time.monotonic() + self._cooldown_s
+                logger.error(f"REMOTE RERANKER UNAVAILABLE, local fallback for {self._cooldown_s:.0f}s: {e}")
+        self.last_path = "local"
+        return self._local.predict(sentences, **kwargs)
+
+
 def onnx_matches_torch(onnx_model: Any, torch_model: Any, pairs=_SELF_CHECK_PAIRS, tol: float = 1e-3) -> bool:
     """Same order and scores within `tol` on fixed pairs; anything else must not replace torch."""
     import numpy as np
@@ -133,7 +199,7 @@ class RerankingStrategy:
             return None
         if RERANK_BACKEND != "onnx":
             logger.info(f"Reranker backend: torch (RERANK_BACKEND={RERANK_BACKEND})")
-            return model
+            return self._with_remote(model)
         try:
             from huggingface_hub import hf_hub_download
 
@@ -143,11 +209,30 @@ class RerankingStrategy:
             if not onnx_matches_torch(onnx_model, model):
                 raise RuntimeError("ONNX export does not rank the self-check pairs like torch")
             logger.info(f"Reranker backend: onnxruntime ({ONNX_MODEL_FILE}), self-check passed")
-            return onnx_model
+            local = onnx_model
         except Exception as e:
             # Loud, never silent: torch still reranks correctly, ~0.3 s slower per query.
             logger.error(f"RERANKER ONNX UNAVAILABLE, falling back to torch: {e}")
-            return model
+            local = model
+        return self._with_remote(local)
+
+    def _with_remote(self, local: Any) -> Any:
+        """Put the DGX GPU reranker in front of `local`, unless it is configured off or ranks differently."""
+        if not RERANK_REMOTE_URL:
+            return local
+        remote = RemoteFirstReranker(RERANK_REMOTE_URL, self.model_name, local,
+                                     RERANK_REMOTE_TIMEOUT_S, RERANK_REMOTE_COOLDOWN_S)
+        try:
+            pairs = [list(p) for p in _SELF_CHECK_PAIRS]
+            got = remote.remote_scores(pairs)
+            if not onnx_matches_torch(type("R", (), {"predict": lambda _s, _p: got})(), local):
+                logger.error("REMOTE RERANKER ranks the self-check pairs differently; NOT used")
+                return local
+            logger.info(f"Reranker backend: remote GPU {RERANK_REMOTE_URL}, local fallback ready, self-check passed")
+        except Exception as e:
+            # Down at startup is fine: every call tries it and falls back per call.
+            logger.error(f"REMOTE RERANKER unreachable at load ({e}); will retry per call, local fallback")
+        return remote
 
     def is_available(self) -> bool:
         """Check if reranking is available (model loaded successfully)."""

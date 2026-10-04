@@ -41,6 +41,9 @@ services:
       - OMP_NUM_THREADS=2
       - MKL_NUM_THREADS=2
       - TORCH_NUM_THREADS=2
+      # The cross-encoder on the DGX GPU via the VPS socket proxy (aivonic-dgx-rerank); the
+      # local ONNX reranker is the automatic fallback. Empty = local only.
+      - RERANK_REMOTE_URL=${RERANK_REMOTE_URL:-http://172.19.0.1:18097}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ARCHON_SERVER_PORT=${ARCHON_SERVER_PORT:-8181}
       - ARCHON_MCP_PORT=${ARCHON_MCP_PORT:-8051}

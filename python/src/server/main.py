@@ -120,6 +120,13 @@ async def lifespan(app: FastAPI):
         _initialization_complete = True
         api_logger.info("🎉 Archon backend started successfully!")
 
+        # Load and exercise the reranker now, off the event loop, so the first
+        # visitor after a restart does not pay the model load (11.2 s, 2026-10-04).
+        import asyncio as _asyncio
+
+        from .services.search.rag_service import warm_reranker
+        _asyncio.get_running_loop().create_task(_asyncio.to_thread(warm_reranker))
+
     except Exception:
         api_logger.error("❌ Failed to start backend", exc_info=True)
         raise
