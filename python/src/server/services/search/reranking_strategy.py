@@ -27,6 +27,65 @@ logger = get_logger(__name__)
 # Default reranking model
 DEFAULT_RERANKING_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
+# ⛔ THE FORWARD PASS RUNS ON ONNX RUNTIME, THE MODEL IS UNCHANGED (2026-10-04).
+# Measured on 63 SPARK queries x 15 live candidates, 2 CPU threads, the box's
+# own image: torch p50 1096 ms / p95 2003; the model's own fp32 ONNX export
+# (onnx/model.onnx in the same Hugging Face repo) p50 771 / p95 1023, with the
+# SAME top-15 order on 63/63 and the same 8,000-char context SPARK builds on
+# 63/63 (max score difference 9.5e-6). The int8 export was ~2x faster again and
+# REJECTED: it changed SPARK's built context on 55/63. Tokenising, max_length and
+# the activation stay the CrossEncoder's own, so only the forward pass moves.
+# RERANK_BACKEND=torch switches back without a deploy of new code.
+RERANK_BACKEND = os.getenv("RERANK_BACKEND", "onnx").strip().lower()
+ONNX_MODEL_FILE = "onnx/model.onnx"
+# Ranked identically by torch and by a correct export; checked at load.
+_SELF_CHECK_PAIRS = [
+    ("what does it cost", "The Standard package costs 6,500 dollars to set up and 1,000 a month."),
+    ("what does it cost", "Our office is closed on public holidays."),
+    ("what does it cost", "Pricing depends on the package you choose; see the plans below."),
+]
+
+
+class OnnxCrossEncoder:
+    """A CrossEncoder whose forward pass runs on ONNX Runtime. predict() matches CrossEncoder.predict."""
+
+    def __init__(self, cross_encoder: Any, model_file: str, threads: int = 2):
+        import numpy as np
+        import onnxruntime as ort
+
+        so = ort.SessionOptions()
+        so.intra_op_num_threads = max(1, threads)
+        so.inter_op_num_threads = 1
+        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        self._np = np
+        self._ce = cross_encoder
+        self._session = ort.InferenceSession(model_file, so, providers=["CPUExecutionProvider"])
+        self._inputs = [i.name for i in self._session.get_inputs()]
+
+    def predict(self, sentences, **_: Any):
+        import torch
+
+        pairs = [tuple(p) for p in sentences]
+        if not pairs:
+            return self._np.zeros(0, dtype=self._np.float32)
+        features = self._ce.tokenizer(
+            [a for a, _ in pairs], [b for _, b in pairs], padding=True, truncation=True,
+            max_length=self._ce.max_length, return_tensors="np")
+        logits = self._session.run(
+            None, {n: features[n].astype(self._np.int64) for n in self._inputs if n in features})[0]
+        scores = self._ce.activation_fn(torch.from_numpy(logits))
+        return scores.reshape(-1).numpy()
+
+
+def onnx_matches_torch(onnx_model: Any, torch_model: Any, pairs=_SELF_CHECK_PAIRS, tol: float = 1e-3) -> bool:
+    """Same order and scores within `tol` on fixed pairs; anything else must not replace torch."""
+    import numpy as np
+
+    a = np.asarray(torch_model.predict(pairs), dtype=np.float64).reshape(-1)
+    b = np.asarray(onnx_model.predict(pairs), dtype=np.float64).reshape(-1)
+    return (a.shape == b.shape and list(np.argsort(-a, kind="stable")) == list(np.argsort(-b, kind="stable"))
+            and float(np.max(np.abs(a - b))) <= tol)
+
 
 class RerankingStrategy:
     """Strategy class implementing result reranking using CrossEncoder models"""
@@ -68,10 +127,27 @@ class RerankingStrategy:
 
         try:
             logger.info(f"Loading reranking model: {self.model_name}")
-            return CrossEncoder(self.model_name)
+            model = CrossEncoder(self.model_name)
         except Exception as e:
             logger.error(f"Failed to load reranking model {self.model_name}: {e}")
             return None
+        if RERANK_BACKEND != "onnx":
+            logger.info(f"Reranker backend: torch (RERANK_BACKEND={RERANK_BACKEND})")
+            return model
+        try:
+            from huggingface_hub import hf_hub_download
+
+            onnx_model = OnnxCrossEncoder(
+                model, hf_hub_download(self.model_name, ONNX_MODEL_FILE),
+                threads=int(os.getenv("OMP_NUM_THREADS", "2")))
+            if not onnx_matches_torch(onnx_model, model):
+                raise RuntimeError("ONNX export does not rank the self-check pairs like torch")
+            logger.info(f"Reranker backend: onnxruntime ({ONNX_MODEL_FILE}), self-check passed")
+            return onnx_model
+        except Exception as e:
+            # Loud, never silent: torch still reranks correctly, ~0.3 s slower per query.
+            logger.error(f"RERANKER ONNX UNAVAILABLE, falling back to torch: {e}")
+            return model
 
     def is_available(self) -> bool:
         """Check if reranking is available (model loaded successfully)."""

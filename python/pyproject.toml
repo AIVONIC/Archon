@@ -75,6 +75,8 @@ server-reranking = [
     "sentence-transformers>=4.1.0",
     "torch>=2.0.0",
     "transformers>=4.30.0",
+    # The cross-encoder's forward pass (reranking_strategy.py): same model, fp32 export.
+    "onnxruntime>=1.20.0",
 ]
 
 # MCP container dependencies
