@@ -88,6 +88,17 @@ RERANK_REMOTE_TIMEOUT_S = float(os.getenv("RERANK_REMOTE_TIMEOUT_S", "0.5"))
 RERANK_REMOTE_COOLDOWN_S = float(os.getenv("RERANK_REMOTE_COOLDOWN_S", "30"))
 
 
+def _is_stale_connection(e: Exception) -> bool:
+    """True for the errors a closed keep-alive connection produces, not for a slow or failing server."""
+    try:
+        import httpx
+    except ImportError:
+        return False
+    if isinstance(e, httpx.RemoteProtocolError):
+        return True
+    return isinstance(e, (httpx.ReadError, httpx.WriteError)) and "reset by peer" in str(e).lower()
+
+
 class RemoteFirstReranker:
     """The GPU reranker on the DGX first; the local model (ONNX or torch) as the automatic fallback.
 
@@ -113,7 +124,12 @@ class RemoteFirstReranker:
         if self._client is None:
             import httpx
 
-            self._client = httpx.Client(timeout=self._timeout_s)
+            # uvicorn on the DGX closes an idle connection after 5 s, and httpx keeps one for 5 s
+            # by default, so a reuse at the boundary met a closing socket: "Server disconnected
+            # without sending a response" at 03:16 UTC on 2026-10-05, with the server healthy.
+            # Expiring idle connections well inside the server's window removes the race.
+            self._client = httpx.Client(timeout=self._timeout_s,
+                                        limits=httpx.Limits(keepalive_expiry=2.0))
         return self._client
 
     def remote_scores(self, pairs: list[list[str]]):
@@ -132,7 +148,15 @@ class RemoteFirstReranker:
         pairs = [[str(a), str(b)] for a, b in sentences]
         if pairs and time.monotonic() >= self._down_until:   # in-process cooldown: worst case one wasted call
             try:
-                out = self.remote_scores(pairs)
+                try:
+                    out = self.remote_scores(pairs)
+                except Exception as e:
+                    # A reused connection the server had already closed fails instantly and says
+                    # nothing about the server. Retry it once on a fresh connection; a timeout or
+                    # an HTTP error is a real answer and falls back at once.
+                    if not _is_stale_connection(e):
+                        raise
+                    out = self.remote_scores(pairs)
                 self.last_path = "remote"
                 return out
             except Exception as e:

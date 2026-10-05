@@ -158,6 +158,30 @@ def test_any_remote_problem_falls_back_to_the_local_model_and_cools_down(behave)
     assert c.calls == 1                       # skipped during the cooldown: one timeout per window, not per query
 
 
+def test_a_stale_keepalive_connection_is_retried_once_not_treated_as_down():
+    import httpx
+    state = {"n": 0}
+
+    def behave(body):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+        return _Resp(200, {"model": body["model"], "scores": [0.4, 0.6]})
+    r, c = _remote(behave)
+    assert np.allclose(r.predict([("q", "a"), ("q", "b")]), [0.4, 0.6])
+    assert r.last_path == "remote" and c.calls == 2
+    r.predict([("q", "a"), ("q", "b")])
+    assert c.calls == 3                       # no cooldown was started
+
+
+def test_a_stale_connection_twice_falls_back():
+    import httpx
+    r, c = _remote(lambda body: (_ for _ in ()).throw(httpx.RemoteProtocolError("disconnected")),
+                   local=_CE(scores=[0.9, 0.1]))
+    assert np.allclose(r.predict([("q", "a"), ("q", "b")]), [0.9, 0.1])
+    assert r.last_path == "local" and c.calls == 2
+
+
 def test_after_the_cooldown_the_gpu_is_tried_again():
     state = {"up": False}
     r, c = _remote(lambda body: _Resp(200, {"model": body["model"], "scores": [0.5]}) if state["up"]
