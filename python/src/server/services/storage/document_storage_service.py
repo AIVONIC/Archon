@@ -475,7 +475,9 @@ async def add_documents_to_supabase(
             # Get model information for tracking
             from ..llm_provider_service import get_embedding_model
 
-            # Get embedding model name
+            # The SETTING's model name: only a fallback for an embedding whose
+            # producing model was not reported. The label written per row below is
+            # the model that actually produced that row's vector (result.models).
             embedding_model_name = await get_embedding_model(provider=provider)
             
             # Get LLM chat model (used for contextual embeddings if enabled)
@@ -509,7 +511,7 @@ async def add_documents_to_supabase(
                 positions_by_text[text].append(idx)
 
             # Map successful texts back to their original indices
-            for embedding, text in zip(batch_embeddings, successful_texts, strict=False):
+            for k, (embedding, text) in enumerate(zip(batch_embeddings, successful_texts, strict=False)):
                 # Get the next available index for this text (handles duplicates)
                 if positions_by_text[text]:
                     j = positions_by_text[text].popleft()  # Original index for this occurrence
@@ -555,7 +557,8 @@ async def add_documents_to_supabase(
                     "source_id": source_id,
                     embedding_column: embedding,  # Use the successful embedding with correct column
                     "llm_chat_model": llm_chat_model,  # Add LLM model tracking
-                    "embedding_model": embedding_model_name,  # Add embedding model tracking
+                    # The model that PRODUCED this vector, not the configured one.
+                    "embedding_model": result.model_at(k, embedding_model_name),
                     "embedding_dimension": embedding_dim,  # Add dimension tracking
                     "page_id": page_id,  # Link chunk to page
                 }

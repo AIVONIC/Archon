@@ -1285,7 +1285,8 @@ async def add_code_examples_to_supabase(
         # Get model information for tracking
         from ..llm_provider_service import get_embedding_model
 
-        # Get embedding model name
+        # The SETTING's model name: only a fallback for an embedding whose
+        # producing model was not reported. Each row records result.models[k].
         embedding_model_name = await get_embedding_model(provider=embedding_provider)
 
         # Get LLM chat model (used for code summaries and contextual embeddings if enabled)
@@ -1320,7 +1321,7 @@ async def add_code_examples_to_supabase(
             positions_by_text[text].append(original_indices[k])
 
         # Map successful texts back to their original indices
-        for embedding, text in zip(valid_embeddings, successful_texts, strict=True):
+        for k, (embedding, text) in enumerate(zip(valid_embeddings, successful_texts, strict=True)):
             # Get the next available index for this text (handles duplicates)
             if positions_by_text[text]:
                 orig_idx = positions_by_text[text].popleft()  # Original j index in [i, batch_end)
@@ -1363,7 +1364,8 @@ async def add_code_examples_to_supabase(
                 "source_id": source_id,
                 embedding_column: embedding,
                 "llm_chat_model": llm_chat_model,  # Add LLM model tracking
-                "embedding_model": embedding_model_name,  # Add embedding model tracking
+                # The model that PRODUCED this vector, not the configured one.
+                "embedding_model": result.model_at(k, embedding_model_name),
                 "embedding_dimension": embedding_dim,  # Add dimension tracking
             })
 

@@ -36,12 +36,25 @@ class EmbeddingBatchResult:
     success_count: int = 0
     failure_count: int = 0
     texts_processed: list[str] = field(default_factory=list)  # Successfully processed texts
+    # The model that PRODUCED each embedding, parallel to `embeddings`. Taken from
+    # the embedding server's response, not from the setting that was asked for: a
+    # server that substitutes a model returns a vector from the wrong space that
+    # looks exactly like a right one, and the label is the only record of which
+    # space a stored vector is in. None when nothing reported it.
+    models: list[str | None] = field(default_factory=list)
 
-    def add_success(self, embedding: list[float], text: str):
-        """Add a successful embedding."""
+    def add_success(self, embedding: list[float], text: str, model: str | None = None):
+        """Add a successful embedding, with the model that produced it."""
         self.embeddings.append(embedding)
         self.texts_processed.append(text)
+        self.models.append(model)
         self.success_count += 1
+
+    def model_at(self, index: int, fallback: str | None = None) -> str | None:
+        """The model that produced embeddings[index], or `fallback` if unknown."""
+        if 0 <= index < len(self.models) and self.models[index]:
+            return self.models[index]
+        return fallback
 
     def add_failure(self, text: str, error: Exception, batch_index: int | None = None):
         """Add a failed item with error details."""
@@ -71,6 +84,11 @@ class EmbeddingBatchResult:
 class EmbeddingProviderAdapter(ABC):
     """Adapter interface for embedding providers."""
 
+    # The model id the provider said it served on the LAST create_embeddings
+    # call, or None when the provider does not report one. Reset per call so a
+    # value can never carry over from an earlier batch.
+    last_served_model: str | None = None
+
     @abstractmethod
     async def create_embeddings(
         self,
@@ -99,8 +117,13 @@ class OpenAICompatibleEmbeddingAdapter(EmbeddingProviderAdapter):
         }
         if dimensions is not None:
             request_args["dimensions"] = dimensions
-            
+
+        self.last_served_model = None
         response = await self._client.embeddings.create(**request_args)
+        # OpenAI-shaped responses carry the model that served the request.
+        served = getattr(response, "model", None)
+        if isinstance(served, str) and served.strip():
+            self.last_served_model = served.strip()
         return [item.embedding for item in response.data]
 
 
@@ -215,6 +238,22 @@ class GoogleEmbeddingAdapter(EmbeddingProviderAdapter):
             search_logger.error(f"Failed to normalize embedding: {e}")
             # Return original embedding if normalization fails
             return embedding
+
+
+def _served_model(requested: str, reported: str | None) -> str:
+    """The model to RECORD for a vector: what the server reported, else what was asked.
+
+    A mismatch is logged loudly. It means the server substituted a model, so the
+    vector is in a different space from the one the setting names, and recording
+    the setting would make the stored label a false statement about the vector.
+    """
+    if reported and reported != requested:
+        search_logger.warning(
+            f"Embedding server served '{reported}' when asked for '{requested}'. "
+            f"Recording '{reported}', the model that produced the vector."
+        )
+        return reported
+    return reported or requested
 
 
 def _get_embedding_adapter(provider: str, client: Any) -> EmbeddingProviderAdapter:
@@ -413,9 +452,13 @@ async def create_embeddings_batch(
                                         embedding_model,
                                         dimensions=dimensions_to_use,
                                     )
+                                    served_model = _served_model(
+                                        embedding_model,
+                                        getattr(adapter, "last_served_model", None),
+                                    )
 
                                     for text, vector in zip(batch, embeddings, strict=False):
-                                        result.add_success(vector, text)
+                                        result.add_success(vector, text, served_model)
 
                                     break  # Success, exit retry loop
 
