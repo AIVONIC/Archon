@@ -6,6 +6,7 @@ Includes proper rate limiting for OpenAI API calls.
 """
 
 import os
+import re
 
 import openai
 
@@ -163,110 +164,169 @@ async def _get_model_choice(provider: str | None = None) -> str:
     return model
 
 
+# A contextual call must fit the chat model's context window per request (16,384 tokens per slot on the
+# DGX Qwen lane). Text full of URLs packs about 1.9 characters per token (37,500 characters measured as
+# 19,688 tokens, 2026-11-05), so this budget stays near 8,500 prompt tokens even for that kind of text,
+# leaving room for the answer.
+CONTEXTUAL_PROMPT_MAX_CHARS = int(os.getenv("CONTEXTUAL_PROMPT_MAX_CHARS", "16000"))
+DOCUMENT_PREVIEW_CHARS = 2000
+CHUNK_PREVIEW_CHARS = 500
+_CHUNK_LINE = re.compile(r"^\s*\**\s*CHUNK\s+(\d+)\s*\**\s*:\s*\**\s*(.+)$", re.IGNORECASE)
+
+
+class ContextTooLarge(Exception):
+    """The model refused the request because the prompt exceeds its context window."""
+
+
+def _is_context_overflow(error: Exception) -> bool:
+    text = str(error)
+    # llama.cpp: exceed_context_size_error; OpenAI: context_length_exceeded
+    return "exceed_context_size" in text or "context_length_exceeded" in text
+
+
+def pack_contextual_calls(previews: list[str], chunks: list[str], max_chars: int) -> list[list[int]]:
+    """Group chunk indexes into calls whose prompt stays within max_chars.
+
+    Each distinct document preview is counted once per call, because the prompt carries it once.
+    A single chunk always gets a call of its own, even when it alone is over the budget.
+    """
+    calls: list[list[int]] = []
+    current: list[int] = []
+    seen: set[str] = set()
+    size = 0
+    for i, chunk in enumerate(chunks):
+        cost = len(chunk) + (0 if previews[i] in seen else len(previews[i]))
+        if current and size + cost > max_chars:
+            calls.append(current)
+            current, seen, size = [], set(), 0
+            cost = len(chunk) + len(previews[i])
+        current.append(i)
+        seen.add(previews[i])
+        size += cost
+    if current:
+        calls.append(current)
+    return calls
+
+
+def build_contextual_prompt(previews: list[str], chunks: list[str]) -> str:
+    """One prompt for several chunks. Each document preview appears once; chunks refer to it by number."""
+    doc_numbers: dict[str, int] = {}
+    for preview in previews:
+        doc_numbers.setdefault(preview, len(doc_numbers) + 1)
+    prompt = "Process the following chunks and provide contextual information for each:\n\n"
+    for preview, number in doc_numbers.items():
+        prompt += f'<document id="{number}">\n{preview}\n</document>\n\n'
+    for i, (preview, chunk) in enumerate(zip(previews, chunks, strict=True)):
+        prompt += f'CHUNK {i + 1}:\n<chunk document="{doc_numbers[preview]}">\n{chunk}\n</chunk>\n\n'
+    prompt += (
+        "For each chunk, provide a short succinct context to situate it within its document for improving "
+        "search retrieval. Format your response as:\nCHUNK 1: [context]\nCHUNK 2: [context]\netc."
+    )
+    return prompt
+
+
+def parse_contextual_response(response_text: str) -> dict[int, str]:
+    """Map zero-based chunk index to its context from lines like 'CHUNK 3: ...'."""
+    contexts: dict[int, str] = {}
+    for line in response_text.strip().split("\n"):
+        match = _CHUNK_LINE.match(line)
+        if match and match.group(2).strip():
+            contexts[int(match.group(1)) - 1] = match.group(2).strip()
+    return contexts
+
+
+async def _contextual_call(client, model_choice: str, previews: list[str], chunks: list[str]) -> list[tuple[str, bool]]:
+    """One model call for these chunks. Raises ContextTooLarge when the prompt does not fit."""
+    batch_params = {
+        "model": model_choice,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that generates contextual information for document chunks.",
+            },
+            {"role": "user", "content": build_contextual_prompt(previews, [c[:CHUNK_PREVIEW_CHARS] for c in chunks])},
+        ],
+        "temperature": 0,
+        # Reasoning models (GPT-5) need room for their reasoning as well as the answer
+        "max_tokens": (600 if requires_max_completion_tokens(model_choice) else 100) * len(chunks),
+    }
+    try:
+        response = await client.chat.completions.create(**prepare_chat_completion_params(model_choice, batch_params))
+    except openai.BadRequestError as e:
+        if _is_context_overflow(e):
+            raise ContextTooLarge(str(e)) from e
+        raise
+
+    choice = response.choices[0] if response.choices else None
+    response_text, _, _ = extract_message_text(choice)
+    if not response_text:
+        search_logger.error(f"Empty response from LLM when generating contextual embeddings for {len(chunks)} chunks")
+        return [(chunk, False) for chunk in chunks]
+
+    contexts = parse_contextual_response(response_text)
+    # The context goes in front of the full chunk, not the preview the model saw
+    return [
+        (contexts[i] + "\n\n" + chunk, True) if i in contexts else (chunk, False)
+        for i, chunk in enumerate(chunks)
+    ]
+
+
+async def _contextual_call_splitting(client, model_choice: str, previews: list[str], chunks: list[str]) -> list[tuple[str, bool]]:
+    """Run one call; when the model says the prompt is too large, halve it and try each half."""
+    try:
+        return await _contextual_call(client, model_choice, previews, chunks)
+    except ContextTooLarge as e:
+        if len(chunks) == 1:
+            search_logger.error(f"Contextual embedding skipped: one chunk with its document preview exceeds the model context: {e}")
+            return [(chunks[0], False)]
+        half = len(chunks) // 2
+        search_logger.warning(f"Contextual prompt for {len(chunks)} chunks exceeds the model context; splitting into {half} + {len(chunks) - half}")
+        return (await _contextual_call_splitting(client, model_choice, previews[:half], chunks[:half])
+                + await _contextual_call_splitting(client, model_choice, previews[half:], chunks[half:]))
+
+
 async def generate_contextual_embeddings_batch(
     full_documents: list[str], chunks: list[str], provider: str = None
 ) -> list[tuple[str, bool]]:
     """
-    Generate contextual information for multiple chunks in a single API call to avoid rate limiting.
+    Generate contextual information for multiple chunks with as few model calls as fit.
 
-    This processes ALL chunks passed to it in a single API call.
-    The caller should batch appropriately (e.g., 10 chunks at a time).
+    The chunks are packed into calls by prompt size (CONTEXTUAL_PROMPT_MAX_CHARS), with each document's
+    preview sent once per call. A call the model still refuses as too large is split in half and retried.
 
     Args:
-        full_documents: List of complete document texts
+        full_documents: List of complete document texts, one per chunk
         chunks: List of specific chunks to generate context for
         provider: Optional provider override
 
     Returns:
-        List of tuples containing:
+        List of tuples, in the order of chunks, containing:
         - The contextual text that situates the chunk within the document
         - Boolean indicating if contextual embedding was performed
     """
+    previews = [doc[:DOCUMENT_PREVIEW_CHARS] for doc in full_documents]
+    sizes = [min(len(c), CHUNK_PREVIEW_CHARS) for c in chunks]
+    results: list[tuple[str, bool]] = [(chunk, False) for chunk in chunks]
+    calls = pack_contextual_calls(previews, ["x" * n for n in sizes], CONTEXTUAL_PROMPT_MAX_CHARS)
     try:
         async with get_llm_client(provider=provider) as client:
-            # Get model choice from credential service (RAG setting)
             model_choice = await _get_model_choice(provider)
-
-            # Build batch prompt for ALL chunks at once
-            batch_prompt = "Process the following chunks and provide contextual information for each:\n\n"
-
-            for i, (doc, chunk) in enumerate(zip(full_documents, chunks, strict=False)):
-                # Use only 2000 chars of document context to save tokens
-                doc_preview = doc[:2000] if len(doc) > 2000 else doc
-                batch_prompt += f"CHUNK {i + 1}:\n"
-                batch_prompt += f"<document_preview>\n{doc_preview}\n</document_preview>\n"
-                batch_prompt += f"<chunk>\n{chunk[:500]}\n</chunk>\n\n"  # Limit chunk preview
-
-            batch_prompt += (
-                "For each chunk, provide a short succinct context to situate it within the overall document for improving search retrieval. "
-                "Format your response as:\nCHUNK 1: [context]\nCHUNK 2: [context]\netc."
-            )
-
-            # Make single API call for ALL chunks
-            # Prepare parameters and convert max_tokens for GPT-5/reasoning models
-            batch_params = {
-                "model": model_choice,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are a helpful assistant that generates contextual information for document chunks.",
-                    },
-                    {"role": "user", "content": batch_prompt},
-                ],
-                "temperature": 0,
-                "max_tokens": (600 if requires_max_completion_tokens(model_choice) else 100) * len(chunks),  # Much more tokens for reasoning models (GPT-5 needs extra reasoning space)
-            }
-            final_batch_params = prepare_chat_completion_params(model_choice, batch_params)
-            response = await client.chat.completions.create(**final_batch_params)
-
-            # Parse response
-            choice = response.choices[0] if response.choices else None
-            response_text, _, _ = extract_message_text(choice)
-            if not response_text:
-                search_logger.error(
-                    "Empty response from LLM when generating contextual embeddings batch"
-                )
-                return [(chunk, False) for chunk in chunks]
-
-            # Extract contexts from response
-            lines = response_text.strip().split("\n")
-            chunk_contexts = {}
-
-            for line in lines:
-                if line.strip().startswith("CHUNK"):
-                    parts = line.split(":", 1)
-                    if len(parts) == 2:
-                        chunk_num = int(parts[0].strip().split()[1]) - 1
-                        context = parts[1].strip()
-                        chunk_contexts[chunk_num] = context
-
-            # Build results
-            results = []
-            for i, chunk in enumerate(chunks):
-                if i in chunk_contexts:
-                    # Combine context with full chunk (not truncated)
-                    contextual_text = chunk_contexts[i] + "\\n\\n" + chunk
-                    results.append((contextual_text, True))
-                else:
-                    results.append((chunk, False))
-
-            return results
-
-    except openai.RateLimitError as e:
-        if "insufficient_quota" in str(e):
-            search_logger.warning(f"⚠️ QUOTA EXHAUSTED in contextual embeddings: {e}")
-            search_logger.warning(
-                "OpenAI quota exhausted - proceeding without contextual embeddings"
-            )
-        else:
-            search_logger.warning(f"Rate limit hit in contextual embeddings batch: {e}")
-            search_logger.warning(
-                "Rate limit hit - proceeding without contextual embeddings for this batch"
-            )
-        # Return non-contextual for all chunks
-        return [(chunk, False) for chunk in chunks]
-
+            for call in calls:
+                try:
+                    call_results = await _contextual_call_splitting(
+                        client, model_choice, [previews[i] for i in call], [chunks[i] for i in call]
+                    )
+                except openai.RateLimitError as e:
+                    if "insufficient_quota" in str(e):
+                        search_logger.warning(f"Quota exhausted in contextual embeddings, proceeding without them: {e}")
+                    else:
+                        search_logger.warning(f"Rate limit hit in contextual embeddings, proceeding without them for this call: {e}")
+                    continue
+                except Exception as e:
+                    search_logger.error(f"Error in contextual embedding call for {len(call)} chunks: {e}", exc_info=True)
+                    continue
+                for i, result in zip(call, call_results, strict=True):
+                    results[i] = result
     except Exception as e:
-        search_logger.error(f"Error in contextual embedding batch: {e}")
-        # Return non-contextual for all chunks
-        return [(chunk, False) for chunk in chunks]
+        search_logger.error(f"Error in contextual embedding batch: {e}", exc_info=True)
+    return results
