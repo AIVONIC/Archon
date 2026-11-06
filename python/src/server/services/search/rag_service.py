@@ -65,6 +65,17 @@ def warm_reranker() -> None:
         logger.error(f"Reranker warm-up failed: {e}")
 
 
+
+RESULT_CONTENT_CHARS = 1000
+
+
+def _clip(content: str, full_content: bool) -> str:
+    """A result's content: the whole chunk when the caller asks for it, else the historical first
+    1,000 characters. The cut kept a CPU reranker fast and silently dropped every fact past it in
+    a longer chunk, so callers that answer from the text (agent KB retrieval) ask for full_content.
+    The reranker truncates to its own token limit either way."""
+    return content if full_content else content[:RESULT_CONTENT_CHARS]
+
 class RAGService:
     """
     Coordinator service that orchestrates multiple RAG strategies.
@@ -272,6 +283,7 @@ class RAGService:
         return_mode: str = "chunks",
         skip_reranking: bool = False,
         tag: str = None,
+        full_content: bool = False,
     ) -> tuple[bool, dict[str, Any]]:
         """
         Unified RAG query with all strategies.
@@ -379,7 +391,7 @@ class RAGService:
                         formatted_results = [
                             {
                                 "id": r.get("id", f"result_{i}"),
-                                "content": (r.get("content") or "")[:1000],
+                                "content": _clip(r.get("content") or "", full_content),
                                 "metadata": r.get("metadata", {}) or {},
                                 "similarity_score": r.get("similarity", 0.0),
                                 # ⛔ THE SCORE ABOVE IS RANK FUSION, NOT RELEVANCE.
@@ -507,7 +519,7 @@ class RAGService:
                     try:
                         formatted_result = {
                             "id": result.get("id", f"result_{i}"),
-                            "content": result.get("content", "")[:1000],  # Limit content
+                            "content": _clip(result.get("content", ""), full_content),
                             "metadata": result.get("metadata", {}),
                             "similarity_score": result.get("similarity", 0.0),
                         }

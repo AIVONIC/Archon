@@ -182,6 +182,11 @@ class RagQueryRequest(BaseModel):
     return_mode: str = "chunks"  # "chunks" or "pages"
     skip_reranking: bool = False
     tag: str | None = None  # agent KB retrieval: scope to one agent's chunks
+    # Whole chunks instead of their first 1,000 characters. The cut was made to keep a CPU
+    # reranker fast; it silently dropped every fact past character 1,000 of a longer chunk
+    # (2026-11-06: a client agent's top-ranked chunk carried the asked-for fact at ~1,100).
+    # Off by default so existing callers get exactly what they got before.
+    full_content: bool = False
 
 
 @router.get("/crawl-progress/{progress_id}")
@@ -1151,6 +1156,7 @@ async def perform_rag_query(request: RagQueryRequest):
             return_mode=request.return_mode,
             skip_reranking=request.skip_reranking,
             tag=request.tag,
+            full_content=request.full_content,
         )
 
         if success:

@@ -165,6 +165,37 @@ class TestRAGServiceSearch:
             assert params["query_text"]                 # the keyword arm gets the words
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("full_content,expected_len", [(False, 1000), (True, 1302)])
+    async def test_tag_path_returns_whole_chunks_when_asked(self, rag_service, mock_backend, full_content, expected_len):
+        """A client agent's top-ranked chunk carried the asked-for fact at ~1,100 characters and the
+        first-1,000 cut dropped it (2026-11-06). full_content returns the chunk whole."""
+        long_chunk = "x" * 1100 + "LinkedIn 80 %, blogg 15 %, X 5 %" + "y" * 170
+        mock_backend.rpc.return_value = [
+            {"id": "c1", "content": long_chunk, "similarity": 0.91, "metadata": {"tags": ["acme-bot"]}},
+        ]
+        with patch("src.server.services.search.rag_service.create_embedding") as mock_embed:
+            mock_embed.return_value = [0.1] * 384
+            success, result = await rag_service.perform_rag_query(
+                query="hur fördelas kampanjerna", match_count=5, tag="acme-bot",
+                skip_reranking=True, full_content=full_content,
+            )
+        assert success is True
+        content = result["results"][0]["content"]
+        assert len(content) == expected_len
+        assert ("LinkedIn 80" in content) is full_content
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("full_content,expected_len", [(False, 1000), (True, 2400)])
+    async def test_general_path_returns_whole_chunks_when_asked(self, rag_service, full_content, expected_len):
+        with patch.object(rag_service, "search_documents") as mock_search:
+            mock_search.return_value = [{"id": "1", "content": "z" * 2400, "similarity": 0.8, "metadata": {}}]
+            success, result = await rag_service.perform_rag_query(
+                query="test query", match_count=5, full_content=full_content
+            )
+        assert success is True
+        assert len(result["results"][0]["content"]) == expected_len
+
+    @pytest.mark.asyncio
     async def test_search_code_examples_delegation(self, rag_service):
         """Test code examples search delegates to agentic strategy"""
         with patch.object(rag_service.agentic_strategy, "search_code_examples") as mock_agentic:
