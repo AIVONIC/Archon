@@ -25,11 +25,14 @@ class FakeModel:
         self.max_prompt_chars = max_prompt_chars
         self.fail_calls = fail_calls or set()
         self.prompts: list[str] = []
+        self.events: list[str] = []
+        self.base_url = "http://dgx/v1/"
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     async def create(self, **params):
         prompt = params["messages"][1]["content"]
         self.prompts.append(prompt)
+        self.events.append("call")
         if len(self.prompts) - 1 in self.fail_calls:
             raise RuntimeError("model unavailable")
         if len(prompt) > self.max_prompt_chars:
@@ -59,6 +62,14 @@ def model(monkeypatch):
     monkeypatch.setattr(ces, "get_llm_client", fake_client)
     monkeypatch.setattr(ces, "_get_model_choice", fake_model_choice)
     monkeypatch.setattr(ces, "extract_message_text", lambda choice: (choice.message.content, None, None))
+    # These tests are about packing by prompt size; the chunk cap and the lane wait have their own tests.
+    monkeypatch.setattr(ces, "CONTEXTUAL_MAX_CHUNKS_PER_CALL", None)
+
+    async def record_wait(self):
+        holder["model"].events.append("wait")
+        return 0.0
+
+    monkeypatch.setattr(ces.ChatLane, "wait_until_quiet", record_wait)
     return holder
 
 
@@ -129,3 +140,77 @@ async def test_a_failed_call_fails_only_its_own_chunks_and_order_is_kept(model, 
 def test_response_lines_are_parsed_with_markdown_and_spacing():
     parsed = ces.parse_contextual_response("Here you go\n**CHUNK 1:** first\n  chunk 2 : second\nCHUNK 3:")
     assert parsed == {0: "first", 1: "second"}
+
+
+@pytest.mark.asyncio
+async def test_calls_are_capped_and_each_waits_for_the_lane_first(model, monkeypatch):
+    monkeypatch.setattr(ces, "CONTEXTUAL_MAX_CHUNKS_PER_CALL", 3)
+    docs, chunks = _sitemap(15)
+    results = await ces.generate_contextual_embeddings_batch(docs, chunks)
+
+    assert all(ok for _, ok in results)
+    assert [r.split("\n\n", 1)[1] for r, _ in results] == chunks
+    prompts = model["model"].prompts
+    assert len(prompts) == 5
+    assert all(len(re.findall(r"^CHUNK \d+:$", p, re.MULTILINE)) == 3 for p in prompts)
+    assert model["model"].events == ["wait", "call"] * 5
+
+
+def _lane(answers: list, quiet: float, max_wait: float, monkeypatch) -> tuple[ces.ChatLane, list[str]]:
+    """A ChatLane over a fake /slots that returns the answers in turn (the last one repeats)."""
+    monkeypatch.setattr(ces, "CONTEXTUAL_YIELD_QUIET_S", quiet)
+    monkeypatch.setattr(ces, "CONTEXTUAL_YIELD_MAX_WAIT_S", max_wait)
+    monkeypatch.setattr(ces, "CONTEXTUAL_YIELD_POLL_S", 0.02)
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        answer = answers[min(len(seen) - 1, len(answers) - 1)]
+        if isinstance(answer, int):
+            return httpx.Response(answer, text="Not Found")
+        return httpx.Response(200, json=[{"id": i, "is_processing": busy} for i, busy in enumerate(answer)])
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return ces.ChatLane("http://172.17.0.1:18085/v1/", http), seen
+
+
+def test_slots_url_is_the_server_root_not_the_openai_path():
+    lane = ces.ChatLane("http://172.17.0.1:18085/v1/", httpx.AsyncClient())
+    assert lane.slots_url == "http://172.17.0.1:18085/slots"
+
+
+@pytest.mark.asyncio
+async def test_lane_waits_while_a_customer_request_runs_then_for_the_quiet_period(monkeypatch):
+    busy, idle = [False, True, False], [False, False, False]
+    lane, seen = _lane([busy] * 5 + [idle], quiet=0.1, max_wait=5, monkeypatch=monkeypatch)
+    waited = await lane.wait_until_quiet()
+
+    assert len(seen) >= 5 + 3  # five busy readings, then idle long enough to count as quiet
+    assert waited >= 0.1
+    assert waited < 5
+    assert seen[0] == "http://172.17.0.1:18085/slots"
+
+
+@pytest.mark.asyncio
+async def test_a_short_gap_between_two_chat_calls_does_not_count_as_quiet(monkeypatch):
+    # busy, one idle reading (the gap between a turn's routing call and its reply), busy again, then idle
+    answers = [[True], [False]] + [[True]] * 15 + [[False]]
+    lane, seen = _lane(answers, quiet=0.1, max_wait=5, monkeypatch=monkeypatch)
+    await lane.wait_until_quiet()
+    assert len(seen) > len(answers)  # it only stops once quiet after the LAST busy reading
+
+
+@pytest.mark.asyncio
+async def test_lane_gives_up_waiting_after_the_maximum(monkeypatch):
+    lane, _ = _lane([[True]], quiet=0.05, max_wait=0.3, monkeypatch=monkeypatch)
+    waited = await lane.wait_until_quiet()
+    assert 0.3 <= waited < 1.0
+
+
+@pytest.mark.asyncio
+async def test_a_server_without_slots_is_not_waited_on_and_not_asked_again(monkeypatch):
+    lane, seen = _lane([404], quiet=0.1, max_wait=5, monkeypatch=monkeypatch)
+    assert await lane.wait_until_quiet() < 0.1
+    assert await lane.wait_until_quiet() < 0.1
+    assert len(seen) == 1
+    assert lane.readable is False

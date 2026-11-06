@@ -5,9 +5,12 @@ Handles generation of contextual embeddings for improved RAG retrieval.
 Includes proper rate limiting for OpenAI API calls.
 """
 
+import asyncio
 import os
 import re
+import time
 
+import httpx
 import openai
 
 from ...config.logfire_config import search_logger
@@ -171,6 +174,15 @@ async def _get_model_choice(provider: str | None = None) -> str:
 CONTEXTUAL_PROMPT_MAX_CHARS = int(os.getenv("CONTEXTUAL_PROMPT_MAX_CHARS", "16000"))
 DOCUMENT_PREVIEW_CHARS = 2000
 CHUNK_PREVIEW_CHARS = 500
+# Ingestion shares the chat model with customer conversations, and a contextual call decoding next to a
+# chat reply cut that reply's speed from 68.6 to 29.7 tokens/s (DGX Qwen lane, 2026-11-05). So each call is
+# kept short (a few chunks, a few seconds of decoding) and starts only once the lane has been quiet for
+# CONTEXTUAL_YIELD_QUIET_S, which spans the gap between a chat turn's routing call and its reply. After
+# CONTEXTUAL_YIELD_MAX_WAIT_S it runs anyway, so a busy lane slows ingestion but never stops it.
+CONTEXTUAL_MAX_CHUNKS_PER_CALL = int(os.getenv("CONTEXTUAL_MAX_CHUNKS_PER_CALL", "3"))
+CONTEXTUAL_YIELD_QUIET_S = float(os.getenv("CONTEXTUAL_YIELD_QUIET_S", "2"))
+CONTEXTUAL_YIELD_MAX_WAIT_S = float(os.getenv("CONTEXTUAL_YIELD_MAX_WAIT_S", "30"))
+CONTEXTUAL_YIELD_POLL_S = 0.5
 _CHUNK_LINE = re.compile(r"^\s*\**\s*CHUNK\s+(\d+)\s*\**\s*:\s*\**\s*(.+)$", re.IGNORECASE)
 
 
@@ -184,8 +196,10 @@ def _is_context_overflow(error: Exception) -> bool:
     return "exceed_context_size" in text or "context_length_exceeded" in text
 
 
-def pack_contextual_calls(previews: list[str], chunks: list[str], max_chars: int) -> list[list[int]]:
-    """Group chunk indexes into calls whose prompt stays within max_chars.
+def pack_contextual_calls(
+    previews: list[str], chunks: list[str], max_chars: int, max_chunks: int | None = None
+) -> list[list[int]]:
+    """Group chunk indexes into calls whose prompt stays within max_chars and max_chunks.
 
     Each distinct document preview is counted once per call, because the prompt carries it once.
     A single chunk always gets a call of its own, even when it alone is over the budget.
@@ -196,7 +210,7 @@ def pack_contextual_calls(previews: list[str], chunks: list[str], max_chars: int
     size = 0
     for i, chunk in enumerate(chunks):
         cost = len(chunk) + (0 if previews[i] in seen else len(previews[i]))
-        if current and size + cost > max_chars:
+        if current and (size + cost > max_chars or (max_chunks and len(current) >= max_chunks)):
             calls.append(current)
             current, seen, size = [], set(), 0
             cost = len(chunk) + len(previews[i])
@@ -235,7 +249,55 @@ def parse_contextual_response(response_text: str) -> dict[int, str]:
     return contexts
 
 
-async def _contextual_call(client, model_choice: str, previews: list[str], chunks: list[str]) -> list[tuple[str, bool]]:
+class ChatLane:
+    """Waits for the llama.cpp server behind the LLM client to have no request in progress.
+
+    Reads the server's /slots, where every slot reports is_processing. A server without that endpoint
+    (any hosted API) cannot be read, and then calls run without waiting.
+    """
+
+    def __init__(self, base_url: str, http: httpx.AsyncClient):
+        root = str(base_url).rstrip("/")
+        self.slots_url = (root[: -len("/v1")] if root.endswith("/v1") else root) + "/slots"
+        self.http = http
+        self.readable = True
+
+    async def _busy(self) -> bool | None:
+        try:
+            response = await self.http.get(self.slots_url)
+            response.raise_for_status()
+            slots = response.json()
+            return any(slot["is_processing"] for slot in slots)
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
+            search_logger.warning(f"Cannot read chat lane slots at {self.slots_url}, contextual calls will not wait: {e}")
+            self.readable = False
+            return None
+
+    async def wait_until_quiet(self) -> float:
+        """Return the seconds waited. Waits until no slot has been processing for CONTEXTUAL_YIELD_QUIET_S."""
+        start = time.monotonic()
+        quiet_since = None
+        while self.readable:
+            now = time.monotonic()
+            busy = await self._busy()
+            if busy is None:
+                break
+            if busy:
+                quiet_since = None
+            elif quiet_since is None:
+                quiet_since = now
+            elif now - quiet_since >= CONTEXTUAL_YIELD_QUIET_S:
+                break
+            if now - start >= CONTEXTUAL_YIELD_MAX_WAIT_S:
+                search_logger.info(f"Chat lane still busy after {CONTEXTUAL_YIELD_MAX_WAIT_S:.0f}s, running the contextual call")
+                break
+            await asyncio.sleep(CONTEXTUAL_YIELD_POLL_S)
+        return time.monotonic() - start
+
+
+async def _contextual_call(
+    client, model_choice: str, previews: list[str], chunks: list[str], lane: ChatLane | None = None
+) -> list[tuple[str, bool]]:
     """One model call for these chunks. Raises ContextTooLarge when the prompt does not fit."""
     batch_params = {
         "model": model_choice,
@@ -250,6 +312,8 @@ async def _contextual_call(client, model_choice: str, previews: list[str], chunk
         # Reasoning models (GPT-5) need room for their reasoning as well as the answer
         "max_tokens": (600 if requires_max_completion_tokens(model_choice) else 100) * len(chunks),
     }
+    if lane is not None:
+        await lane.wait_until_quiet()
     try:
         response = await client.chat.completions.create(**prepare_chat_completion_params(model_choice, batch_params))
     except openai.BadRequestError as e:
@@ -271,18 +335,20 @@ async def _contextual_call(client, model_choice: str, previews: list[str], chunk
     ]
 
 
-async def _contextual_call_splitting(client, model_choice: str, previews: list[str], chunks: list[str]) -> list[tuple[str, bool]]:
+async def _contextual_call_splitting(
+    client, model_choice: str, previews: list[str], chunks: list[str], lane: ChatLane | None = None
+) -> list[tuple[str, bool]]:
     """Run one call; when the model says the prompt is too large, halve it and try each half."""
     try:
-        return await _contextual_call(client, model_choice, previews, chunks)
+        return await _contextual_call(client, model_choice, previews, chunks, lane)
     except ContextTooLarge as e:
         if len(chunks) == 1:
             search_logger.error(f"Contextual embedding skipped: one chunk with its document preview exceeds the model context: {e}")
             return [(chunks[0], False)]
         half = len(chunks) // 2
         search_logger.warning(f"Contextual prompt for {len(chunks)} chunks exceeds the model context; splitting into {half} + {len(chunks) - half}")
-        return (await _contextual_call_splitting(client, model_choice, previews[:half], chunks[:half])
-                + await _contextual_call_splitting(client, model_choice, previews[half:], chunks[half:]))
+        return (await _contextual_call_splitting(client, model_choice, previews[:half], chunks[:half], lane)
+                + await _contextual_call_splitting(client, model_choice, previews[half:], chunks[half:], lane))
 
 
 async def generate_contextual_embeddings_batch(
@@ -291,8 +357,10 @@ async def generate_contextual_embeddings_batch(
     """
     Generate contextual information for multiple chunks with as few model calls as fit.
 
-    The chunks are packed into calls by prompt size (CONTEXTUAL_PROMPT_MAX_CHARS), with each document's
-    preview sent once per call. A call the model still refuses as too large is split in half and retried.
+    The chunks are packed into calls by prompt size (CONTEXTUAL_PROMPT_MAX_CHARS) and count
+    (CONTEXTUAL_MAX_CHUNKS_PER_CALL), with each document's preview sent once per call. Each call waits for
+    the chat lane to be quiet first (ChatLane). A call the model still refuses as too large is split in half
+    and retried.
 
     Args:
         full_documents: List of complete document texts, one per chunk
@@ -307,14 +375,17 @@ async def generate_contextual_embeddings_batch(
     previews = [doc[:DOCUMENT_PREVIEW_CHARS] for doc in full_documents]
     sizes = [min(len(c), CHUNK_PREVIEW_CHARS) for c in chunks]
     results: list[tuple[str, bool]] = [(chunk, False) for chunk in chunks]
-    calls = pack_contextual_calls(previews, ["x" * n for n in sizes], CONTEXTUAL_PROMPT_MAX_CHARS)
+    calls = pack_contextual_calls(
+        previews, ["x" * n for n in sizes], CONTEXTUAL_PROMPT_MAX_CHARS, CONTEXTUAL_MAX_CHUNKS_PER_CALL
+    )
     try:
-        async with get_llm_client(provider=provider) as client:
+        async with get_llm_client(provider=provider) as client, httpx.AsyncClient(timeout=2.0) as http:
             model_choice = await _get_model_choice(provider)
+            lane = ChatLane(client.base_url, http)
             for call in calls:
                 try:
                     call_results = await _contextual_call_splitting(
-                        client, model_choice, [previews[i] for i in call], [chunks[i] for i in call]
+                        client, model_choice, [previews[i] for i in call], [chunks[i] for i in call], lane
                     )
                 except openai.RateLimitError as e:
                     if "insufficient_quota" in str(e):
